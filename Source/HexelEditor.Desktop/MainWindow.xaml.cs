@@ -219,7 +219,7 @@ public partial class MainWindow : Window
         ("Copy cells", "Ctrl+C", Copy, true), ("Cut cells", "Ctrl+X", Cut, session.CanPaint), ("Paste at cursor", "Ctrl+V", Paste, clipboard != null && session.CanPaint),
         ("Rotate selection clockwise 60 degrees", "Ctrl+R", () => Act(() => session.RotateSelection(1)), session.Selection.Count > 0 && session.CanPaint),
         ("Rotate selection counterclockwise 60 degrees", "Ctrl+Shift+R", () => Act(() => session.RotateSelection(-1)), session.Selection.Count > 0 && session.CanPaint),
-        ("Select all", "Ctrl+A", session.SelectAll, true), ("Deselect", "Esc", session.ClearSelection, true), ("Clear cells", "Delete", () => Act(session.ClearPixels), session.CanPaint));
+        ("Select all", "Ctrl+A", () => Act(session.SelectAll), true), ("Deselect", "Esc", () => Act(session.ClearSelection), true), ("Clear cells", "Delete", () => Act(session.ClearPixels), session.CanPaint));
 
     private void ViewMenuClicked(object sender, RoutedEventArgs args) => ShowMenu((Button)sender,
         ("Fit canvas", "F", EditorCanvas.Fit, true), (EditorCanvas.ShowGrid ? "Hide grid" : "Show grid", "H", ToggleGrid, true),
@@ -227,8 +227,9 @@ public partial class MainWindow : Window
 
     private void NewProject()
     {
+        if (!CanReplaceDocument()) return;
         var dialog = new NewCanvasDialog { Owner = this };
-        if (dialog.ShowDialog() != true || !CanReplaceDocument()) return;
+        if (dialog.ShowDialog() != true) return;
         projectPath = null; AttachSession(new EditorSession(new HexDocument(dialog.CanvasWidth, dialog.CanvasHeight, dialog.Orientation) { Name = dialog.CanvasName }));
         StatusLabel.Text = "New canvas. Choose a color and make your first mark.";
     }
@@ -306,7 +307,7 @@ public partial class MainWindow : Window
     }
 
     private void ToggleGrid() { EditorCanvas.ShowGrid = !EditorCanvas.ShowGrid; EditorCanvas.InvalidateVisual(); }
-    private void ChangeBrush(int delta) { EditorCanvas.BrushRadius = Math.Clamp(EditorCanvas.BrushRadius + delta, 0, 8); BrushSizeLabel.Text = (EditorCanvas.BrushRadius * 2 + 1).ToString(); EditorCanvas.InvalidateVisual(); }
+    private void ChangeBrush(int delta) { EditorCanvas.BrushRadius = Math.Clamp(EditorCanvas.BrushRadius + delta, 0, EditorSession.MaximumBrushRadius); BrushSizeLabel.Text = (EditorCanvas.BrushRadius * 2 + 1).ToString(); EditorCanvas.InvalidateVisual(); }
 
     private void OnKeyDown(object sender, KeyEventArgs args)
     {
@@ -320,9 +321,10 @@ public partial class MainWindow : Window
             {
                 case Key.N: NewProject(); break; case Key.O: OpenProjectDialog(); break; case Key.S: SaveProject(shift); break;
                 case Key.Z: Act(shift ? session.Redo : session.Undo); break; case Key.Y: Act(session.Redo); break;
-                case Key.A: session.SelectAll(); break; case Key.D: session.ClearSelection(); break;
-                case Key.C: Copy(); break; case Key.X: Cut(); break; case Key.V: Paste(); break; default: return;
+                case Key.A: Act(session.SelectAll); break; case Key.D: Act(session.ClearSelection); break;
+                case Key.C: Copy(); break; case Key.X: Cut(); break; case Key.V: Paste(); break;
                 case Key.R: Act(() => session.RotateSelection(shift ? -1 : 1)); break;
+                default: return;
             }
             args.Handled = true; return;
         }
@@ -334,7 +336,7 @@ public partial class MainWindow : Window
             case Key.OemOpenBrackets: ChangeBrush(-1); break; case Key.OemCloseBrackets: ChangeBrush(1); break;
             case Key.OemPlus: case Key.Add: EditorCanvas.ChangeZoom(1.2f); break; case Key.OemMinus: case Key.Subtract: EditorCanvas.ChangeZoom(1 / 1.2f); break;
             case Key.Delete: case Key.Back: Act(session.ClearPixels); break;
-            case Key.Escape: StopPlayback(); session.ClearSelection(); break;
+            case Key.Escape: Act(session.ClearSelection); break;
             case Key.Space: EditorCanvas.SpacePressed = true; break; case Key.Enter: if (!args.IsRepeat) TogglePlayback(); break;
             case Key.Left: Act(() => session.MoveSelection(-1, 0)); break; case Key.Right: Act(() => session.MoveSelection(1, 0)); break;
             case Key.Up: Act(() => session.MoveSelection(0, -1)); break; case Key.Down: Act(() => session.MoveSelection(0, 1)); break;
@@ -376,11 +378,20 @@ public partial class MainWindow : Window
     private void OnionSkinChanged(object sender, RoutedEventArgs args) { EditorCanvas.ShowOnionSkin = OnionSkin.IsChecked == true; EditorCanvas.InvalidateVisual(); }
     private void SetDurationClicked(object sender, RoutedEventArgs args)
     {
-        if (int.TryParse(DurationInput.Text, out var duration)) Act(() => session.SetFrameDuration(duration)); else ShowError("Enter a duration between 20 and 10000 milliseconds.");
+        if (int.TryParse(DurationInput.Text, out var duration)) Act(() => session.SetFrameDuration(duration));
+        else ShowError($"Enter a duration between {HexDocument.MinimumFrameDuration} and {HexDocument.MaximumFrameDuration} milliseconds.");
     }
     private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
     private void ColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetColorClicked(sender, args); args.Handled = true; } }
-    private void AddColorClicked(object sender, RoutedEventArgs args) => Act(() => session.AddPaletteColor(EditorCanvas.ForegroundColor));
+    private void AddColorClicked(object sender, RoutedEventArgs args)
+    {
+        var color = EditorCanvas.ForegroundColor;
+        var full = session.Document.Palette.Count >= HexDocument.MaximumPaletteColors;
+        Act(() => StatusLabel.Text = session.AddPaletteColor(color)
+            ? $"Added {ColorMath.Format(color)} to the palette."
+            : full ? $"The palette already holds its {HexDocument.MaximumPaletteColors} colors."
+            : $"{ColorMath.Format(color)} is already in the palette.");
+    }
     private void HelpClicked(object sender, RoutedEventArgs args) => EditorDialogs.ShowHelp(this);
 
     public void VerifyEditor(string folder)

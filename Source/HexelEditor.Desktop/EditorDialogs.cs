@@ -45,13 +45,14 @@ public sealed class NewCanvasDialog : Window
         var panel = new StackPanel { Margin = new Thickness(28) };
         panel.Children.Add(new TextBlock { Text = "Start something hextraordinary.", FontSize = 21, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 24) });
         void Field(string label, TextBox input) { panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 7) }); panel.Children.Add(input); input.Margin = new Thickness(0, 0, 0, 16); }
-        Field("Project name", nameInput); Field("Columns (1-256)", widthInput); Field("Rows (1-256)", heightInput);
+        Field("Project name", nameInput); Field($"Columns (1-{HexDocument.MaximumDimension})", widthInput); Field($"Rows (1-{HexDocument.MaximumDimension})", heightInput);
         panel.Children.Add(new TextBlock { Text = "Hexagon orientation", Margin = new Thickness(0, 0, 0, 4) }); panel.Children.Add(pointy); panel.Children.Add(new RadioButton { Content = "Flat top", GroupName = "Orientation" });
         var create = new Button { Content = "Create canvas", IsDefault = true, Style = (Style)Application.Current.FindResource("AccentButton"), Margin = new Thickness(0, 20, 0, 0) };
         create.Click += (_, _) =>
         {
-            if (!int.TryParse(widthInput.Text, out var width) || !int.TryParse(heightInput.Text, out var height) || width is < 1 or > 256 || height is < 1 or > 256)
-            { MessageBox.Show(this, "Enter dimensions between 1 and 256 hexels.", "Canvas size"); return; }
+            if (!int.TryParse(widthInput.Text, out var width) || !int.TryParse(heightInput.Text, out var height) ||
+                width is < 1 or > HexDocument.MaximumDimension || height is < 1 or > HexDocument.MaximumDimension)
+            { MessageBox.Show(this, $"Enter dimensions between 1 and {HexDocument.MaximumDimension} hexels.", "Canvas size"); return; }
             CanvasWidth = width; CanvasHeight = height; DialogResult = true;
         };
         panel.Children.Add(create); Content = panel;
