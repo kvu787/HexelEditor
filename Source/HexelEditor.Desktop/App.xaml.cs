@@ -8,27 +8,50 @@ namespace HexelEditor.Desktop;
 
 public partial class App : Application
 {
+    internal static SessionLog Log { get; private set; } = null!;
+    private readonly bool verifying;
+
+    public App()
+    {
+        var arguments = Environment.GetCommandLineArgs();
+        verifying = arguments.Length == 3 && arguments[1] == "--verify-output";
+        Log = new SessionLog(verifying ? Path.GetFullPath(arguments[2]) : null);
+        AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+        DispatcherUnhandledException += (_, args) =>
+        {
+            Log.Write($"Unhandled dispatcher exception: {args.Exception}");
+            args.Handled = true;
+            if (verifying) { Shutdown(1); return; }
+            MessageBox.Show(args.Exception.Message, "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Error);
+        };
+    }
+
+    private void OnUnhandledException(object sender, UnhandledExceptionEventArgs args) => Log.Write($"Fatal exception: {args.ExceptionObject}");
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            base.OnExit(e);
+            Log.Write($"Application exited. Exit code: {e.ApplicationExitCode}.");
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
+            Log.Dispose();
+        }
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        DispatcherUnhandledException += (_, args) =>
-        {
-            if (e.Args.Length == 2 && e.Args[0] == "--verify-output")
-            {
-                Directory.CreateDirectory(e.Args[1]);
-                File.WriteAllText(Path.Combine(e.Args[1], "Failure.txt"), args.Exception.ToString());
-                args.Handled = true; Shutdown(1); return;
-            }
-            MessageBox.Show(args.Exception.Message, "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Error);
-            args.Handled = true;
-        };
         var window = new MainWindow();
         MainWindow = window;
-        if (e.Args.Length == 2 && e.Args[0] == "--verify-output")
+        if (verifying)
         {
             // Render without opening a physical display. Used by the verification script.
-            var folder = Path.GetFullPath(e.Args[1]);
-            Directory.CreateDirectory(folder);
+            var folder = Log.FolderPath;
+            Log.Write("Desktop verification started.");
             window.Width = 1440; window.Height = 960;
             var root = (FrameworkElement)window.Content;
             window.Content = null;
@@ -42,6 +65,7 @@ public partial class App : Application
             window.VerifyCanvasRendered();
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
+            Log.Write("Desktop verification passed.");
             Shutdown();
             return;
         }

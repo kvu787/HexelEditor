@@ -1,21 +1,30 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
-& (Join-Path $PSScriptRoot 'Build.ps1')
+& (Join-Path $RepositoryRoot 'Build.ps1')
 & (Join-Path $PSScriptRoot 'Test.ps1')
-$verificationPath = Join-Path $RepositoryRoot ('Artifacts/Verification/' + [DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))
-New-Item -ItemType Directory -Path $verificationPath -Force | Out-Null
-$executable = Join-Path $RepositoryRoot 'Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe'
+do {
+    $verificationPath = Join-Path $RepositoryRoot ('LogOutput/' + (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'))
+    if (-not (Test-Path -LiteralPath $verificationPath)) { break }
+    Start-Sleep -Milliseconds 50
+} while ($true)
+New-Item -ItemType Directory -Path $verificationPath | Out-Null
+$executable = Get-EditorExecutable
 $errorReport = Join-Path $verificationPath 'StandardError.txt'
-$process = Start-Process -FilePath $executable -ArgumentList ('--verify-output "' + $verificationPath + '"') -WindowStyle Hidden -RedirectStandardError $errorReport -PassThru
+$process = Start-Process -FilePath $executable -ArgumentList ('--verify-output "' + $verificationPath + '"') -WindowStyle Hidden -RedirectStandardError $errorReport -RedirectStandardOutput (Join-Path $verificationPath 'StandardOutput.txt') -PassThru
 if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Desktop verification timed out.' }
 if ($process.ExitCode -ne 0) {
     Get-Content -LiteralPath $errorReport
-    $failureReport = Join-Path $verificationPath 'Failure.txt'
-    if (Test-Path -LiteralPath $failureReport) { Get-Content -LiteralPath $failureReport }
+    $sessionReport = Join-Path $verificationPath 'Session.log'
+    if (Test-Path -LiteralPath $sessionReport) { Get-Content -LiteralPath $sessionReport }
     throw "Desktop verification failed with exit code $($process.ExitCode)."
 }
 $report = Join-Path $verificationPath 'Verification.txt'
 if (-not (Test-Path -LiteralPath $report)) { throw 'Desktop verification did not produce its report.' }
 Get-Content -LiteralPath $report
+$sessionLog = Get-Content -LiteralPath (Join-Path $verificationPath 'Session.log') -Raw
+if ($sessionLog -notmatch 'Application started\.' -or $sessionLog -notmatch 'Desktop verification passed\.' -or $sessionLog -notmatch 'Application exited\. Exit code: 0\.') {
+    throw 'Desktop verification did not record the complete application session.'
+}
+Write-Output 'Application session logging: passed'
 Write-Output "Verification artifacts: $verificationPath"

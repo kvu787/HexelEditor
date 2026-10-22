@@ -3,5 +3,6 @@
 **/TestResults/
 .vs/
 Artifacts/
+LogOutput/
 *.user
 *.suo

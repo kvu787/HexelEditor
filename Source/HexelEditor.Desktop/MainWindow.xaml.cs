@@ -188,10 +188,14 @@ public partial class MainWindow : Window
     {
         StopPlayback(); EditorCanvas.FinishGesture();
         try { action(); }
-        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or FormatException) { ShowError(exception.Message); }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or FormatException) { ShowError(exception.Message, exception); }
     }
 
-    private void ShowError(string message) => MessageBox.Show(this, message, "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Information);
+    private void ShowError(string message, Exception? exception = null)
+    {
+        App.Log.Write($"Editor error: {message}{(exception == null ? "" : $"\n{exception}")}");
+        MessageBox.Show(this, message, "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
 
     private void ShowMenu(Button source, params (string Name, string Shortcut, Action Action, bool Enabled)[] entries)
     {
@@ -248,8 +252,8 @@ public partial class MainWindow : Window
     public void OpenProject(string path)
     {
         if (!CanReplaceDocument()) return;
-        try { var document = ProjectFile.Load(path); projectPath = System.IO.Path.GetFullPath(path); AttachSession(new EditorSession(document)); StatusLabel.Text = $"Opened {System.IO.Path.GetFileName(path)}"; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or System.Text.Json.JsonException) { ShowError($"Could not open the project.\n\n{exception.Message}"); }
+        try { var document = ProjectFile.Load(path); projectPath = System.IO.Path.GetFullPath(path); AttachSession(new EditorSession(document)); StatusLabel.Text = $"Opened {System.IO.Path.GetFileName(path)}"; App.Log.Write($"Opened project: {projectPath}"); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or System.Text.Json.JsonException) { ShowError($"Could not open the project.\n\n{exception.Message}", exception); }
     }
 
     private bool SaveProject(bool saveAs)
@@ -262,8 +266,8 @@ public partial class MainWindow : Window
             if (dialog.ShowDialog(this) != true) return false;
             path = dialog.FileName;
         }
-        try { ProjectFile.Save(session.Document, path); projectPath = path; session.MarkSaved(); StatusLabel.Text = $"Saved {System.IO.Path.GetFileName(path)}"; return true; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { ShowError($"Could not save the project.\n\n{exception.Message}"); return false; }
+        try { ProjectFile.Save(session.Document, path); projectPath = path; session.MarkSaved(); StatusLabel.Text = $"Saved {System.IO.Path.GetFileName(path)}"; App.Log.Write($"Saved project: {path}"); return true; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { ShowError($"Could not save the project.\n\n{exception.Message}", exception); return false; }
     }
 
     private void Export(string format, bool sheet)
@@ -276,8 +280,9 @@ public partial class MainWindow : Window
             if (format == "svg") ArtworkRenderer.ExportSvg(session.Document, session.ActiveFrame, dialog.FileName);
             else ArtworkRenderer.ExportPng(session.Document, session.ActiveFrame, dialog.FileName, sheet);
             StatusLabel.Text = $"Exported {System.IO.Path.GetFileName(dialog.FileName)}";
+            App.Log.Write($"Exported artwork: {dialog.FileName}");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { ShowError($"Could not export.\n\n{exception.Message}"); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { ShowError($"Could not export.\n\n{exception.Message}", exception); }
     }
 
     private void StopPlayback() { playback.Stop(); EditorCanvas.IsPlaying = false; PlayButton.Content = "Play"; EditorCanvas.InvalidateVisual(); }
@@ -373,7 +378,7 @@ public partial class MainWindow : Window
     {
         if (int.TryParse(DurationInput.Text, out var duration)) Act(() => session.SetFrameDuration(duration)); else ShowError("Enter a duration between 20 and 10000 milliseconds.");
     }
-    private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message); } }
+    private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
     private void ColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetColorClicked(sender, args); args.Handled = true; } }
     private void AddColorClicked(object sender, RoutedEventArgs args) => Act(() => session.AddPaletteColor(EditorCanvas.ForegroundColor));
     private void HelpClicked(object sender, RoutedEventArgs args) => EditorDialogs.ShowHelp(this);

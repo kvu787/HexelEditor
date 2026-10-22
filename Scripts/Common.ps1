@@ -20,3 +20,8 @@ function Invoke-DotNet {
     & dotnet @Arguments
     if ($LASTEXITCODE -ne 0) { throw "dotnet $($Arguments[0]) failed with exit code $LASTEXITCODE." }
 }
+
+function Get-EditorExecutable {
+    param([ValidateSet('Debug', 'Release')][string] $Configuration = 'Release')
+    Join-Path $RepositoryRoot "Source/HexelEditor.Desktop/bin/$Configuration/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe"
+}
