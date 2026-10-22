@@ -131,3 +131,25 @@ With that constraint removed, my preference is **C++20 + Qt 6 Widgets + a custom
 I'd keep the editing core independent of Qt and render visible hexagons in batches. That gives us room to optimize large canvases without changing how documents and tools work.
 
 **My reason for choosing this stack is control over the drawing experience alongside a mature desktop UI toolkit.** The cost is more C++ and renderer maintenance, which I'd accept for a substantial art editor.
+
+## User
+
+are you better at c# or c++
+
+## Assistant
+
+I'll answer in terms of my implementation strengths for this editor and add the exchange to the conversation log.
+
+## Assistant
+
+I'm using the openai-docs skill to keep the answer grounded in what I can reasonably claim about my capabilities.
+
+## Assistant
+
+**For this editor, I'd be more confident delivering reliable results in C#.**
+
+Its managed memory, simpler build setup, and Windows UI tooling reduce the opportunities for implementation mistakes. C++ needs more care around object lifetimes, undefined behavior, and graphics resources.
+
+That's an engineering judgment. The [official OpenAI guidance I checked](https://developers.openai.com/api/docs/guides/code-generation) doesn't establish a C# versus C++ capability ranking.
+
+My earlier C++ recommendation prioritized low-level control. Factoring in delivery reliability, **I'd choose C# + .NET + WPF + SkiaSharp**.
