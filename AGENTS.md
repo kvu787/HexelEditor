@@ -40,6 +40,29 @@ All PowerShell scripts must use:
 - Set-StrictMode -Version Latest
 - $ErrorActionPreference = 'Stop'
 
+## Applications
+
+### Running
+
+If you create a runnable application, create files called `Build.cmd` and `Run.cmd` that respectively build and run the application when double-clicked from File Explorer.
+These must be located at the root of the application's folder in the Git repo.
+These must be simple wrappers for PowerShell scripts named `Build.ps1` and `Run.ps1` which contain the actual logic to minimize the amount of batch code written.
+Run.cmd must exit if it doesn't discover a build of the application at the place that Build.cmd outputs to.
+If the application doesn't need to be "built" for it to be run (such as a PowerShell script), then omit Build.cmd and Build.ps1.
+
+### Logging
+
+When creating an application, create a folder called `LogOutput` at the root of the application's folder in the git repo.
+For each run of the application, a folder must be created in LogOutput and named with the current timestamp. This PowerShell code shows what the name of the folder should be:
+
+```powershell
+$logFolderPath = "$env:UserProfile\Repository\Godot\VsyncStutterTest\LogOutput\$(Get-Date -Format "yyyy-MM-dd_HH-mm-ss")"
+New-Item -ItemType "Directory" -Path $logFolderPath
+```
+
+Any logs for that application session must be put in that log folder.
+`LogOutput/` must be gitignored.
+
 ## Conversations
 
 Record verbatim and commit all conversations in a folder named `Conversations` located at the root of this Git repo.
