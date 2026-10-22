@@ -153,3 +153,25 @@ Its managed memory, simpler build setup, and Windows UI tooling reduce the oppor
 That's an engineering judgment. The [official OpenAI guidance I checked](https://developers.openai.com/api/docs/guides/code-generation) doesn't establish a C# versus C++ capability ranking.
 
 My earlier C++ recommendation prioritized low-level control. Factoring in delivery reliability, **I'd choose C# + .NET + WPF + SkiaSharp**.
+
+## User
+
+do i need to install/download anything additional for you to implement this in your desired c# tech stack
+
+## Assistant
+
+I'll check the SDK and build requirements to see whether anything needs a manual installation.
+
+## Assistant
+
+**No additional manual installation should be necessary.** I verified that this machine has:
+
+- .NET 10 SDK (10.0.402, x64).
+- WPF build tools and desktop reference assemblies.
+- .NET 10 Windows Desktop Runtime.
+
+I'll add SkiaSharp and test libraries as NuGet project dependencies; those can download automatically during setup. [SkiaSharp package](https://www.nuget.org/packages/SkiaSharp.Views.WPF).
+
+Visual Studio is optional. The installed SDK provides the build tools for [WPF projects](https://learn.microsoft.com/en-us/dotnet/core/project-sdk/msbuild-props-desktop), so I can build and test from PowerShell.
+
+You just need internet access for dependency downloads.
