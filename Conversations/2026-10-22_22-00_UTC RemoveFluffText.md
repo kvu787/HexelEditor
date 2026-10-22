@@ -38,3 +38,11 @@ Files touched: `Source/HexelEditor.Desktop/MainWindow.xaml`, `Source/HexelEditor
 `Scripts/Verify.ps1` passed: build with no warnings, 53 unit tests, and the desktop verification run (save/load, PNG export, sprite sheet, SVG, session logging). The app was not opened on a physical display for a visual check.
 
 Commit: `Remove decorative tagline text from the interface`.
+
+## User
+
+No need to launch it.
+
+## Assistant
+
+Understood, the change is left as committed.
