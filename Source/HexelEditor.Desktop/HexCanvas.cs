@@ -11,6 +11,8 @@ public enum DrawingTool { Pencil, Eraser, Fill, Eyedropper, Line, Rectangle, Sel
 
 public sealed class HexCanvas : SKElement
 {
+    private const float MinimumZoom = 0.08f;
+    private const float MaximumZoom = 30f;
     private EditorSession? session;
     private HexCoordinate? hover;
     private HexCoordinate? start;
@@ -58,7 +60,7 @@ public sealed class HexCanvas : SKElement
     {
         if (session == null || ActualWidth <= 0 || ActualHeight <= 0) return;
         var bounds = ArtworkRenderer.Bounds(session.Document);
-        Zoom = Math.Clamp((float)Math.Min((ActualWidth - 100) / bounds.Width, (ActualHeight - 90) / bounds.Height), 0.08f, 12);
+        Zoom = Math.Clamp((float)Math.Min((ActualWidth - 100) / bounds.Width, (ActualHeight - 90) / bounds.Height), MinimumZoom, MaximumZoom);
         offsetX = ((float)ActualWidth - bounds.Width * Zoom) / 2 - bounds.Left * Zoom;
         offsetY = ((float)ActualHeight - bounds.Height * Zoom) / 2 - bounds.Top * Zoom;
         needsFit = false; InvalidateVisual(); ZoomChanged?.Invoke();
@@ -67,7 +69,7 @@ public sealed class HexCanvas : SKElement
     public void ChangeZoom(float factor, Point? anchor = null)
     {
         var center = anchor ?? new Point(ActualWidth / 2, ActualHeight / 2);
-        var next = Math.Clamp(Zoom * factor, 0.08f, 30f);
+        var next = Math.Clamp(Zoom * factor, MinimumZoom, MaximumZoom);
         offsetX = (float)(center.X - (center.X - offsetX) * next / Zoom);
         offsetY = (float)(center.Y - (center.Y - offsetY) * next / Zoom);
         Zoom = next; InvalidateVisual(); ZoomChanged?.Invoke();
@@ -89,10 +91,13 @@ public sealed class HexCanvas : SKElement
         using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(92, 228, 194) };
         using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(92, 228, 194, 36) };
+        var visible = canvas.LocalClipBounds;
         void Highlight(HexCoordinate coordinate, bool filled)
         {
             if (session.Document.IndexOf(coordinate) < 0) return;
             var (x, y) = HexGeometry.Center(coordinate, session.Document.Orientation, ArtworkRenderer.CellRadius);
+            // A whole-canvas selection is mostly off screen once zoomed in, so the artwork's culling applies here too.
+            if (!ArtworkRenderer.IsVisible(visible, x, y)) return;
             canvas.Save(); canvas.Translate((float)x, (float)y);
             if (filled) canvas.DrawPath(path, fill);
             canvas.DrawPath(path, outline); canvas.Restore();

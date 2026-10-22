@@ -19,6 +19,9 @@ public static class ArtworkRenderer
             : new(-radius, -halfWidth, (document.Width - 1) * 1.5f * radius + radius, (float)(Math.Sqrt(3) * radius * (document.Height - 1 + (document.Width > 1 ? 0.5 : 0))) + halfWidth);
     }
 
+    public static bool IsVisible(SKRect viewport, double x, double y, float radius = CellRadius) =>
+        x + radius >= viewport.Left && x - radius <= viewport.Right && y + radius >= viewport.Top && y - radius <= viewport.Bottom;
+
     public static SKPath Hexagon(HexOrientation orientation, float radius = CellRadius)
     {
         using var path = new SKPathBuilder();
@@ -41,7 +44,7 @@ public static class ArtworkRenderer
         for (var index = 0; index < document.CellCount; index++)
         {
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
-            if (x + CellRadius < visible.Left || x - CellRadius > visible.Right || y + CellRadius < visible.Top || y - CellRadius > visible.Bottom) continue;
+            if (!IsVisible(visible, x, y)) continue;
             canvas.Save(); canvas.Translate((float)x, (float)y);
             if (paper)
             {
