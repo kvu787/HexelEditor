@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
+    <UseWPF>true</UseWPF>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AssemblyName>HexelEditor</AssemblyName>
+    <ApplicationManifest>Application.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../HexelEditor.Core/HexelEditor.Core.csproj" />
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.2" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,82 @@
+<Window x:Class="HexelEditor.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:HexelEditor.Desktop"
+        Title="Hexel Editor" Width="1440" Height="960" MinWidth="1120" MinHeight="740"
+        WindowStartupLocation="CenterScreen" Closing="OnClosing" PreviewKeyDown="OnKeyDown" PreviewKeyUp="OnKeyUp">
+  <Grid>
+    <Grid.RowDefinitions><RowDefinition Height="66" /><RowDefinition Height="45" /><RowDefinition Height="*" /><RowDefinition Height="30" /></Grid.RowDefinitions>
+    <Border Grid.Row="0" Background="{StaticResource Panel}" BorderBrush="{StaticResource Outline}" BorderThickness="0,0,0,1">
+      <Grid Margin="22,0">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Path Data="M 14,0 L 27,7 L 27,22 L 14,29 L 1,22 L 1,7 Z M 14,7 L 20,11 L 20,18 L 14,22 L 8,18 L 8,11 Z" Fill="{StaticResource Accent}" Stretch="Uniform" Width="28" Height="30" />
+          <StackPanel Margin="12,0,0,0"><TextBlock Text="HEXEL" FontWeight="Bold" FontSize="18" /><TextBlock Text="ART STUDIO" FontSize="9" Foreground="{StaticResource Muted}" /></StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock x:Name="DocumentTitle" Text="Neon tide" FontWeight="SemiBold" HorizontalAlignment="Center" /><TextBlock x:Name="DocumentDetails" Foreground="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" /></StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"><Button Content="Open" Click="OpenClicked" Style="{StaticResource QuietButton}" Margin="0,0,6,0" /><Button Content="Save project" Click="SaveClicked" Margin="0,0,8,0" /><Button Content="Export PNG" Click="ExportPngClicked" Style="{StaticResource AccentButton}" /></StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="1" Background="#171C24" BorderBrush="{StaticResource Outline}" BorderThickness="0,0,0,1">
+      <DockPanel Margin="14,0">
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="BRUSH" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" /><Button Content="-" Click="SmallerBrushClicked" Padding="8,2" /><TextBlock x:Name="BrushSizeLabel" Text="1" Width="34" TextAlignment="Center" VerticalAlignment="Center" /><Button Content="+" Click="LargerBrushClicked" Padding="8,2" /><CheckBox x:Name="FilledRectangle" Content="Filled shapes" Margin="16,0,0,0" /></StackPanel>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Button Content="File" Click="FileMenuClicked" Style="{StaticResource QuietButton}" /><Button Content="Edit" Click="EditMenuClicked" Style="{StaticResource QuietButton}" /><Button Content="View" Click="ViewMenuClicked" Style="{StaticResource QuietButton}" /><Button Content="Help" Click="HelpClicked" Style="{StaticResource QuietButton}" /><Border Width="1" Background="{StaticResource Outline}" Margin="12,8" /><Button x:Name="UndoButton" Content="Undo" Click="UndoClicked" Style="{StaticResource QuietButton}" /><Button x:Name="RedoButton" Content="Redo" Click="RedoClicked" Style="{StaticResource QuietButton}" /></StackPanel>
+      </DockPanel>
+    </Border>
+    <Grid Grid.Row="2">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /><ColumnDefinition Width="278" /></Grid.ColumnDefinitions>
+      <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Outline}" BorderThickness="0,0,1,0">
+        <DockPanel Margin="9,16">
+          <TextBlock DockPanel.Dock="Bottom" Text="HEX&#x0a;GRID" TextAlignment="Center" Foreground="{StaticResource Muted}" FontSize="9" Margin="0,12,0,0" />
+          <StackPanel x:Name="ToolsPanel" />
+        </DockPanel>
+      </Border>
+      <Grid Grid.Column="1">
+        <Grid.RowDefinitions><RowDefinition Height="44" /><RowDefinition Height="*" /><RowDefinition Height="154" /></Grid.RowDefinitions>
+        <Border BorderBrush="{StaticResource Outline}" BorderThickness="0,0,0,1" Background="#181E27">
+          <DockPanel Margin="18,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"><Button Content="-" Click="ZoomOutClicked" Style="{StaticResource QuietButton}" Padding="8,3" /><TextBlock x:Name="ZoomLabel" Text="100%" Width="50" TextAlignment="Center" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /><Button Content="+" Click="ZoomInClicked" Style="{StaticResource QuietButton}" Padding="8,3" /><Button Content="Fit" Click="FitClicked" Style="{StaticResource QuietButton}" Padding="8,3" Margin="6,0,0,0" /></StackPanel>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Ellipse Width="6" Height="6" Fill="{StaticResource Accent}" Margin="0,0,8,0" /><TextBlock Text="CANVAS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" /><TextBlock x:Name="ToolLabel" Text="Pencil" Margin="16,0,0,0" FontSize="11" /></StackPanel>
+          </DockPanel>
+        </Border>
+        <local:HexCanvas x:Name="EditorCanvas" Grid.Row="1" Focusable="True" ClipToBounds="True" />
+        <Border Grid.Row="2" Background="#181E27" BorderBrush="{StaticResource Outline}" BorderThickness="0,1,0,0" Padding="18,13">
+          <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,10">
+              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button Content="+ Blank" Click="AddFrameClicked" Style="{StaticResource QuietButton}" Padding="8,3" /><Button Content="Duplicate" Click="DuplicateFrameClicked" Style="{StaticResource QuietButton}" Padding="8,3" /><Button x:Name="DeleteFrameButton" Content="Delete" Click="DeleteFrameClicked" Style="{StaticResource QuietButton}" Padding="8,3" /></StackPanel>
+              <StackPanel Orientation="Horizontal"><TextBlock Text="TIMELINE" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" VerticalAlignment="Center" Margin="0,0,14,0" /><Button x:Name="PlayButton" Content="Play" Click="PlayClicked" Padding="10,3" /><CheckBox x:Name="OnionSkin" Content="Onion skin" Margin="14,0,0,0" Checked="OnionSkinChanged" Unchecked="OnionSkinChanged" /></StackPanel>
+            </DockPanel>
+            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="FramesPanel" Orientation="Horizontal" /></ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
+      <Border Grid.Column="2" Background="{StaticResource Panel}" BorderBrush="{StaticResource Outline}" BorderThickness="1,0,0,0">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel>
+            <StackPanel Margin="18,20,18,16">
+              <TextBlock Text="COLOR" Style="{StaticResource Caption}" />
+              <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="CurrentColorPreview" Height="42" CornerRadius="6" BorderThickness="1" BorderBrush="{StaticResource Outline}" /><StackPanel Grid.Column="1" Margin="12,1,0,0"><TextBlock Text="Foreground" FontSize="11" Foreground="{StaticResource Muted}" /><TextBlock x:Name="CurrentColorLabel" FontFamily="Consolas" FontSize="15" Margin="0,4,0,0" /></StackPanel></Grid>
+              <DockPanel><Button DockPanel.Dock="Right" Content="Set" Click="SetColorClicked" Padding="10,5" Margin="6,0,0,0" /><TextBox x:Name="ColorInput" Text="#5CE4C2" MaxLength="9" ToolTip="#RRGGBB or #AARRGGBB" KeyDown="ColorInputKeyDown" /></DockPanel>
+              <DockPanel Margin="0,20,0,8"><Button DockPanel.Dock="Right" Content="+ Add" Click="AddColorClicked" Style="{StaticResource QuietButton}" Padding="5,0" FontSize="10" /><TextBlock Text="STUDIO PALETTE" FontSize="10" Foreground="{StaticResource Muted}" FontWeight="SemiBold" /></DockPanel>
+              <WrapPanel x:Name="PalettePanel" />
+            </StackPanel>
+            <Border Height="1" Background="{StaticResource Outline}" />
+            <StackPanel Margin="18,17,18,16">
+              <DockPanel Margin="0,0,0,12"><TextBlock DockPanel.Dock="Right" x:Name="LayerCountLabel" FontSize="10" Foreground="{StaticResource Muted}" /><TextBlock Text="LAYERS" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Muted}" /></DockPanel>
+              <StackPanel x:Name="LayersPanel" />
+              <StackPanel Orientation="Horizontal" Margin="0,8,0,12"><Button Content="+" Click="AddLayerClicked" Padding="11,4" ToolTip="Add layer" Margin="0,0,5,0" /><Button x:Name="DeleteLayerButton" Content="-" Click="DeleteLayerClicked" Padding="11,4" ToolTip="Delete layer" Margin="0,0,5,0" /><Button Content="Up" Click="LayerUpClicked" Padding="9,4" Margin="0,0,5,0" /><Button Content="Down" Click="LayerDownClicked" Padding="9,4" /><Button Content="Name" Click="RenameLayerClicked" Style="{StaticResource QuietButton}" Padding="6,4" /></StackPanel>
+              <DockPanel Margin="0,0,0,6"><TextBlock DockPanel.Dock="Right" x:Name="OpacityLabel" FontSize="11" /><TextBlock Text="Opacity" FontSize="11" Foreground="{StaticResource Muted}" /></DockPanel>
+              <Slider x:Name="LayerOpacity" Minimum="0" Maximum="255" Value="255" SmallChange="1" LargeChange="16" IsMoveToPointEnabled="True" PreviewMouseLeftButtonUp="OpacityReleased" LostKeyboardFocus="OpacityKeyboardFinished" />
+            </StackPanel>
+            <Border Height="1" Background="{StaticResource Outline}" />
+            <StackPanel Margin="18,17,18,18">
+              <TextBlock Text="FRAME" Style="{StaticResource Caption}" /><DockPanel><TextBlock Text="Duration (ms)" Foreground="{StaticResource Muted}" VerticalAlignment="Center" /><Button DockPanel.Dock="Right" Content="Set" Click="SetDurationClicked" Padding="9,5" Margin="6,0,0,0" /><TextBox x:Name="DurationInput" Width="66" Text="220" MaxLength="5" HorizontalAlignment="Right" /></DockPanel>
+              <Border Background="#232F32" BorderBrush="#34524C" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,20,0,0"><StackPanel><TextBlock Text="MAKE EVERY HEX COUNT." FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Accent}" /><TextBlock Text="B pencil  /  E eraser  /  G fill&#x0a;Space + drag to pan&#x0a;Scroll to zoom at the cursor" Foreground="#A5BAB8" FontSize="11" LineHeight="19" Margin="0,7,0,0" /></StackPanel></Border>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+    <Border Grid.Row="3" Background="#161B23" BorderBrush="{StaticResource Outline}" BorderThickness="0,1,0,0"><DockPanel Margin="16,0"><TextBlock x:Name="SelectionStatus" DockPanel.Dock="Right" Text="Ready" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /><TextBlock x:Name="StatusLabel" Text="Welcome to Hexel. Your canvas is a little different here." VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /></DockPanel></Border>
+  </Grid>
+</Window>

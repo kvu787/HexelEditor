@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Source/">
+    <Project Path="Source/HexelEditor.Core/HexelEditor.Core.csproj" />
+    <Project Path="Source/HexelEditor.Desktop/HexelEditor.Desktop.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/HexelEditor.Tests/HexelEditor.Tests.csproj" />
+  </Folder>
+</Solution>
