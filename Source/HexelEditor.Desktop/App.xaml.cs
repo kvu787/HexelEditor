@@ -65,6 +65,7 @@ public partial class App : Application
             window.VerifyCanvasRendered();
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
+            window.VerifyInterface(folder);
             Log.Write("Desktop verification passed.");
             Shutdown();
             return;

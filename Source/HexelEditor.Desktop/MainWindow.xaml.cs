@@ -19,33 +19,46 @@ public partial class MainWindow : Window
     private EditorSession session = new(ExampleDocument.Create());
     private readonly DispatcherTimer playback = new();
     private readonly Dictionary<DrawingTool, Button> toolButtons = [];
+    private readonly Dictionary<DrawingTool, System.Windows.Shapes.Path> toolIcons = [];
     private readonly Dictionary<int, BitmapSource> thumbnails = [];
     private CellClipboard? clipboard;
     private string? projectPath;
     private bool refreshing;
-    private readonly Brush accent;
-    private readonly Brush panelRaised;
-    private readonly Brush outline;
+    private readonly Brush ink;
+    private readonly Brush strongInk;
     private readonly Brush muted;
+    private readonly Brush divider;
+    private readonly Style frameStyle;
+    private readonly Style listRowStyle;
+    private readonly Style swatchStyle;
+    private readonly Style toolbarButtonStyle;
 
     public MainWindow()
     {
         InitializeComponent();
-        accent = (Brush)FindResource("Accent"); panelRaised = (Brush)FindResource("PanelRaised"); outline = (Brush)FindResource("Outline"); muted = (Brush)FindResource("Muted");
+        ink = (Brush)FindResource("Ink");
+        strongInk = (Brush)FindResource("StrongInk");
+        muted = (Brush)FindResource("Muted");
+        divider = (Brush)FindResource("Divider");
+        frameStyle = (Style)FindResource("FrameButton");
+        listRowStyle = (Style)FindResource("ListRow");
+        swatchStyle = (Style)FindResource("SwatchButton");
+        toolbarButtonStyle = (Style)FindResource("ToolbarButton");
         BuildTools();
         EditorCanvas.ZoomChanged += () => ZoomLabel.Text = $"{EditorCanvas.Zoom * 100:0}%";
         EditorCanvas.StatusChanged += text => StatusLabel.Text = text;
         EditorCanvas.ColorPicked += SetColor;
         LayerOpacity.ValueChanged += (_, _) => OpacityLabel.Text = $"{LayerOpacity.Value / 255 * 100:0}%";
-        FilledRectangle.Checked += (_, _) => EditorCanvas.FilledShapes = true;
-        FilledRectangle.Unchecked += (_, _) => EditorCanvas.FilledShapes = false;
+        FilledShapes.Checked += (_, _) => EditorCanvas.FilledShapes = true;
+        FilledShapes.Unchecked += (_, _) => EditorCanvas.FilledShapes = false;
+        ShowGrid.IsChecked = EditorCanvas.ShowGrid;
         playback.Tick += (_, _) =>
         {
             session.SelectFrame((session.ActiveFrame + 1) % session.Document.Frames.Count);
             playback.Interval = TimeSpan.FromMilliseconds(session.Document.Frames[session.ActiveFrame].DurationMilliseconds);
         };
         AttachSession(session);
-        SetColor(0xFF5CE4C2);
+        SetColor(0xFF000000);
         SetTool(DrawingTool.Pencil);
         Loaded += (_, _) => { EditorCanvas.Fit(); EditorCanvas.Focus(); };
         Deactivated += (_, _) => { EditorCanvas.SpacePressed = false; EditorCanvas.FinishGesture(); };
@@ -73,21 +86,43 @@ public partial class MainWindow : Window
         };
         foreach (var definition in definitions)
         {
-            var content = new StackPanel();
-            content.Children.Add(new System.Windows.Shapes.Path { Data = Geometry.Parse(definition.Geometry), Stroke = (Brush)FindResource("Ink"), StrokeThickness = 1.5, Width = 22, Height = 22, Stretch = Stretch.Uniform });
-            content.Children.Add(new TextBlock { Text = definition.Key, FontSize = 9, Foreground = (Brush)FindResource("Muted"), HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
-            var button = new Button { Content = content, Margin = new Thickness(0, 0, 0, 7), Padding = new Thickness(7), ToolTip = $"{definition.Tool} ({definition.Key})" };
+            var icon = IconPath(definition.Geometry, 22);
+            var button = new Button
+            {
+                Content = icon,
+                Style = (Style)FindResource("ToolButton"),
+                ToolTip = $"{definition.Tool} ({definition.Key})"
+            };
             AutomationProperties.SetName(button, definition.Tool.ToString());
             button.Click += (_, _) => SetTool(definition.Tool);
-            ToolsPanel.Children.Add(button); toolButtons.Add(definition.Tool, button);
+            ToolsPanel.Children.Add(button);
+            toolButtons.Add(definition.Tool, button);
+            toolIcons.Add(definition.Tool, icon);
         }
     }
+
+    private System.Windows.Shapes.Path IconPath(string geometry, double size) => new()
+    {
+        Data = Geometry.Parse(geometry),
+        Stroke = muted,
+        StrokeThickness = 1.6,
+        StrokeStartLineCap = PenLineCap.Round,
+        StrokeEndLineCap = PenLineCap.Round,
+        StrokeLineJoin = PenLineJoin.Round,
+        Width = size,
+        Height = size,
+        Stretch = Stretch.Uniform
+    };
 
     private void SetTool(DrawingTool tool)
     {
         EditorCanvas.FinishGesture(); EditorCanvas.Tool = tool;
-        foreach (var (key, button) in toolButtons) { button.Background = key == tool ? new SolidColorBrush(Color.FromRgb(40, 65, 63)) : Brushes.Transparent; button.BorderBrush = key == tool ? accent : Brushes.Transparent; }
-        ToolLabel.Text = tool == DrawingTool.Selection ? "Selection  /  arrows to move" : tool.ToString();
+        foreach (var (key, button) in toolButtons)
+        {
+            button.Tag = key == tool ? "Active" : null;
+            toolIcons[key].Stroke = key == tool ? strongInk : muted;
+        }
+        ToolLabel.Text = tool == DrawingTool.Selection ? "Selection  /  arrow keys move cells" : tool.ToString();
         EditorCanvas.Focus(); EditorCanvas.InvalidateVisual();
     }
 
@@ -113,11 +148,19 @@ public partial class MainWindow : Window
     private void UpdateHeader()
     {
         var name = projectPath == null ? session.Document.Name : System.IO.Path.GetFileNameWithoutExtension(projectPath);
-        DocumentTitle.Text = name + (session.IsDirty ? "  *" : "");
+        DocumentTitle.Text = name;
+        UnsavedMarker.Visibility = session.IsDirty ? Visibility.Visible : Visibility.Collapsed;
         Title = $"{name}{(session.IsDirty ? " *" : "")} - Hexel Editor";
         DocumentDetails.Text = $"{session.Document.Width} x {session.Document.Height} hexels  /  {(session.Document.Orientation == HexOrientation.PointyTop ? "Pointy top" : "Flat top")}";
-        UndoButton.IsEnabled = session.CanUndo; UndoButton.ToolTip = session.CanUndo ? $"Undo {session.UndoLabel} (Ctrl+Z)" : "Nothing to undo";
-        RedoButton.IsEnabled = session.CanRedo; RedoButton.ToolTip = session.CanRedo ? $"Redo {session.RedoLabel} (Ctrl+Y)" : "Nothing to redo";
+        UndoButton.IsEnabled = UndoMenuItem.IsEnabled = session.CanUndo;
+        UndoMenuItem.Header = session.CanUndo ? $"Undo {session.UndoLabel}" : "Undo";
+        UndoButton.ToolTip = session.CanUndo ? $"Undo {session.UndoLabel} (Ctrl+Z)" : "Nothing to undo";
+        RedoButton.IsEnabled = RedoMenuItem.IsEnabled = session.CanRedo;
+        RedoMenuItem.Header = session.CanRedo ? $"Redo {session.RedoLabel}" : "Redo";
+        RedoButton.ToolTip = session.CanRedo ? $"Redo {session.RedoLabel} (Ctrl+Y)" : "Nothing to redo";
+        CutMenuItem.IsEnabled = ClearMenuItem.IsEnabled = session.CanPaint;
+        PasteMenuItem.IsEnabled = clipboard != null && session.CanPaint;
+        RotateClockwiseMenuItem.IsEnabled = RotateCounterclockwiseMenuItem.IsEnabled = session.Selection.Count > 0 && session.CanPaint;
         SelectionStatus.Text = $"{(session.Selection.Count > 0 ? $"{session.Selection.Count} selected  |  " : "")}{(session.CanPaint ? "" : "Layer locked  |  ")}Frame {session.ActiveFrame + 1} / {session.Document.Frames.Count}";
     }
 
@@ -141,7 +184,13 @@ public partial class MainWindow : Window
         PalettePanel.Children.Clear();
         foreach (var color in session.Document.Palette)
         {
-            var button = new Button { Width = 27, Height = 27, Margin = new Thickness(0, 0, 3, 3), Padding = new Thickness(0), Background = BrushFor(color), BorderBrush = color == EditorCanvas.ForegroundColor ? Brushes.White : Brushes.Transparent, BorderThickness = new Thickness(2), ToolTip = ColorMath.Format(color) };
+            var button = new Button
+            {
+                Content = new Rectangle { Fill = BrushFor(color) },
+                Style = swatchStyle,
+                Tag = color == EditorCanvas.ForegroundColor ? "Active" : null,
+                ToolTip = ColorMath.Format(color)
+            };
             AutomationProperties.SetName(button, $"Color {ColorMath.Format(color)}");
             button.Click += (_, _) => { SetColor(color); EditorCanvas.Focus(); };
             PalettePanel.Children.Add(button);
@@ -150,20 +199,37 @@ public partial class MainWindow : Window
 
     private void RefreshLayers()
     {
-        LayersPanel.Children.Clear(); LayerCountLabel.Text = $"{session.Document.Layers.Count} layers";
+        LayersPanel.Children.Clear();
         for (var index = session.Document.Layers.Count - 1; index >= 0; index--)
         {
-            var layerIndex = index; var layer = session.Document.Layers[index];
-            var grid = new Grid(); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(25) }); grid.ColumnDefinitions.Add(new ColumnDefinition()); grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(27) });
-            var visibility = new CheckBox { IsChecked = layer.Visible, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Layer visibility" };
+            var layerIndex = index; var layer = session.Document.Layers[index]; var active = index == session.ActiveLayer;
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(28) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var visibility = new CheckBox { IsChecked = layer.Visible, VerticalAlignment = VerticalAlignment.Center, ToolTip = layer.Visible ? "Hide layer" : "Show layer" };
             AutomationProperties.SetName(visibility, $"Show {layer.Name}");
-            visibility.Click += (_, _) => Act(() => session.SetLayerVisible(layerIndex, visibility.IsChecked == true)); grid.Children.Add(visibility);
-            var name = new TextBlock { Text = layer.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, FontSize = 12 };
+            visibility.Click += (_, _) => Act(() => session.SetLayerVisible(layerIndex, visibility.IsChecked == true));
+            grid.Children.Add(visibility);
+            var name = new TextBlock
+            {
+                Text = layer.Name,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Foreground = active ? strongInk : ink,
+                FontWeight = active ? FontWeights.SemiBold : FontWeights.Normal
+            };
             Grid.SetColumn(name, 1); grid.Children.Add(name);
-            var locked = new Button { Content = layer.Locked ? "L" : "-", FontSize = 10, Padding = new Thickness(3), Background = Brushes.Transparent, BorderBrush = Brushes.Transparent, ToolTip = layer.Locked ? "Unlock layer" : "Lock layer" };
+            var padlock = IconPath(layer.Locked
+                ? "M 3.5,9.5 L 14.5,9.5 L 14.5,17 L 3.5,17 Z M 6,9.5 L 6,6.5 A 3,3 0 0 1 12,6.5 L 12,9.5"
+                : "M 3.5,9.5 L 14.5,9.5 L 14.5,17 L 3.5,17 Z M 6,9.5 L 6,6.5 A 3,3 0 0 1 12,6.5", 18);
+            padlock.Stroke = layer.Locked ? strongInk : muted;
+            padlock.Opacity = layer.Locked ? 1 : 0.55;
+            var locked = new Button { Content = padlock, Style = toolbarButtonStyle, Padding = new Thickness(5, 4, 5, 4), MinHeight = 0, ToolTip = layer.Locked ? "Unlock layer" : "Lock layer" };
             AutomationProperties.SetName(locked, $"{(layer.Locked ? "Unlock" : "Lock")} {layer.Name}");
-            locked.Click += (_, args) => { args.Handled = true; Act(() => session.SetLayerLocked(layerIndex, !layer.Locked)); }; Grid.SetColumn(locked, 2); grid.Children.Add(locked);
-            var row = new Border { Child = grid, Padding = new Thickness(9, 10, 5, 10), Background = index == session.ActiveLayer ? new SolidColorBrush(Color.FromRgb(40, 54, 58)) : Brushes.Transparent, BorderBrush = index == session.ActiveLayer ? accent : outline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 0, 5), Cursor = Cursors.Hand };
+            locked.Click += (_, args) => { args.Handled = true; Act(() => session.SetLayerLocked(layerIndex, !layer.Locked)); };
+            Grid.SetColumn(locked, 2); grid.Children.Add(locked);
+            var row = new Border { Child = grid, Style = listRowStyle, Tag = active ? "Active" : null, Cursor = Cursors.Hand };
             row.MouseLeftButtonDown += (_, args) => { if (args.OriginalSource is not CheckBox && args.OriginalSource is not Button) { Act(() => session.SelectLayer(layerIndex)); args.Handled = true; } };
             LayersPanel.Children.Add(row);
         }
@@ -174,13 +240,28 @@ public partial class MainWindow : Window
         FramesPanel.Children.Clear();
         for (var index = 0; index < session.Document.Frames.Count; index++)
         {
-            var frameIndex = index;
+            var frameIndex = index; var active = index == session.ActiveFrame;
             if (!thumbnails.TryGetValue(index, out var thumbnail)) { thumbnail = ArtworkRenderer.Thumbnail(session.Document, index); thumbnails.Add(index, thumbnail); }
-            var content = new StackPanel(); content.Children.Add(new Image { Source = thumbnail, Width = 76, Height = 42, Stretch = Stretch.Uniform });
-            content.Children.Add(new TextBlock { Text = $"{index + 1:00}    {session.Document.Frames[index].DurationMilliseconds} ms", FontSize = 10, Foreground = index == session.ActiveFrame ? accent : muted, Margin = new Thickness(0, 3, 0, 0), HorizontalAlignment = HorizontalAlignment.Center });
-            var button = new Button { Content = content, Width = 104, Padding = new Thickness(6, 5, 6, 4), Margin = new Thickness(0, 0, 8, 0), Background = index == session.ActiveFrame ? new SolidColorBrush(Color.FromRgb(35, 51, 52)) : panelRaised, BorderBrush = index == session.ActiveFrame ? accent : outline, ToolTip = $"Frame {index + 1}" };
+            var content = new StackPanel();
+            content.Children.Add(new Border
+            {
+                Child = new Image { Source = thumbnail, Width = ArtworkRenderer.ThumbnailWidth, Height = ArtworkRenderer.ThumbnailHeight, Stretch = Stretch.Uniform },
+                BorderBrush = divider,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(2)
+            });
+            content.Children.Add(new TextBlock
+            {
+                Text = $"{index + 1:00}   {session.Document.Frames[index].DurationMilliseconds} ms",
+                FontSize = 13,
+                Foreground = active ? strongInk : muted,
+                Margin = new Thickness(0, 6, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+            var button = new Button { Content = content, Style = frameStyle, Tag = active ? "Active" : null, ToolTip = $"Frame {index + 1}" };
             AutomationProperties.SetName(button, $"Frame {index + 1}");
-            button.Click += (_, _) => Act(() => session.SelectFrame(frameIndex)); FramesPanel.Children.Add(button);
+            button.Click += (_, _) => Act(() => session.SelectFrame(frameIndex));
+            FramesPanel.Children.Add(button);
         }
     }
 
@@ -196,34 +277,6 @@ public partial class MainWindow : Window
         App.Log.Write($"Editor error: {message}{(exception == null ? "" : $"\n{exception}")}");
         MessageBox.Show(this, message, "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Information);
     }
-
-    private void ShowMenu(Button source, params (string Name, string Shortcut, Action Action, bool Enabled)[] entries)
-    {
-        var menu = new ContextMenu { PlacementTarget = source, Placement = PlacementMode.Bottom };
-        foreach (var entry in entries)
-        {
-            var item = new MenuItem { Header = entry.Name, InputGestureText = entry.Shortcut, IsEnabled = entry.Enabled };
-            item.Click += (_, _) => entry.Action(); menu.Items.Add(item);
-        }
-        source.ContextMenu = menu; menu.IsOpen = true;
-    }
-
-    private void FileMenuClicked(object sender, RoutedEventArgs args) => ShowMenu((Button)sender,
-        ("New canvas...", "Ctrl+N", NewProject, true), ("Open project...", "Ctrl+O", OpenProjectDialog, true),
-        ("Save", "Ctrl+S", () => SaveProject(false), true), ("Save as...", "Ctrl+Shift+S", () => SaveProject(true), true),
-        ("Export PNG...", "", () => Export("png", false), true), ("Export SVG...", "", () => Export("svg", false), true),
-        ("Export sprite sheet...", "", () => Export("png", true), true), ("Open example scene", "", OpenExample, true));
-
-    private void EditMenuClicked(object sender, RoutedEventArgs args) => ShowMenu((Button)sender,
-        ($"Undo {session.UndoLabel}", "Ctrl+Z", () => Act(session.Undo), session.CanUndo), ($"Redo {session.RedoLabel}", "Ctrl+Y", () => Act(session.Redo), session.CanRedo),
-        ("Copy cells", "Ctrl+C", Copy, true), ("Cut cells", "Ctrl+X", Cut, session.CanPaint), ("Paste at cursor", "Ctrl+V", Paste, clipboard != null && session.CanPaint),
-        ("Rotate selection clockwise 60 degrees", "Ctrl+R", () => Act(() => session.RotateSelection(1)), session.Selection.Count > 0 && session.CanPaint),
-        ("Rotate selection counterclockwise 60 degrees", "Ctrl+Shift+R", () => Act(() => session.RotateSelection(-1)), session.Selection.Count > 0 && session.CanPaint),
-        ("Select all", "Ctrl+A", () => Act(session.SelectAll), true), ("Deselect", "Esc", () => Act(session.ClearSelection), true), ("Clear cells", "Delete", () => Act(session.ClearPixels), session.CanPaint));
-
-    private void ViewMenuClicked(object sender, RoutedEventArgs args) => ShowMenu((Button)sender,
-        ("Fit canvas", "F", EditorCanvas.Fit, true), (EditorCanvas.ShowGrid ? "Hide grid" : "Show grid", "H", ToggleGrid, true),
-        ("Zoom in", "+", () => EditorCanvas.ChangeZoom(1.2f), true), ("Zoom out", "-", () => EditorCanvas.ChangeZoom(1 / 1.2f), true));
 
     private void NewProject()
     {
@@ -287,6 +340,7 @@ public partial class MainWindow : Window
     }
 
     private void StopPlayback() { playback.Stop(); EditorCanvas.IsPlaying = false; PlayButton.Content = "Play"; EditorCanvas.InvalidateVisual(); }
+
     private void TogglePlayback()
     {
         EditorCanvas.FinishGesture();
@@ -295,8 +349,9 @@ public partial class MainWindow : Window
         playback.Interval = TimeSpan.FromMilliseconds(session.Document.Frames[session.ActiveFrame].DurationMilliseconds); playback.Start();
     }
 
-    private void Copy() { EditorCanvas.FinishGesture(); clipboard = session.CopySelection(); StatusLabel.Text = "Copied cells. Hover the destination and press Ctrl+V to paste."; }
+    private void Copy() { EditorCanvas.FinishGesture(); clipboard = session.CopySelection(); StatusLabel.Text = "Copied cells. Hover the destination and press Ctrl+V to paste."; UpdateHeader(); }
     private void Cut() { Copy(); Act(session.ClearPixels); }
+
     private void Paste()
     {
         if (clipboard == null) return;
@@ -306,7 +361,7 @@ public partial class MainWindow : Window
         Act(() => session.Paste(clipboard, column, row));
     }
 
-    private void ToggleGrid() { EditorCanvas.ShowGrid = !EditorCanvas.ShowGrid; EditorCanvas.InvalidateVisual(); }
+    private void ToggleGrid() => ShowGrid.IsChecked = ShowGrid.IsChecked != true;
     private void ChangeBrush(int delta) { EditorCanvas.BrushRadius = Math.Clamp(EditorCanvas.BrushRadius + delta, 0, EditorSession.MaximumBrushRadius); BrushSizeLabel.Text = (EditorCanvas.BrushRadius * 2 + 1).ToString(); EditorCanvas.InvalidateVisual(); }
 
     private void OnKeyDown(object sender, KeyEventArgs args)
@@ -349,11 +404,27 @@ public partial class MainWindow : Window
 
     private void OnKeyUp(object sender, KeyEventArgs args) { if (args.Key == Key.Space) EditorCanvas.SpacePressed = false; }
     private void OnClosing(object? sender, CancelEventArgs args) { if (!CanReplaceDocument()) args.Cancel = true; else StopPlayback(); }
+
+    private void NewProjectClicked(object sender, RoutedEventArgs args) => NewProject();
     private void OpenClicked(object sender, RoutedEventArgs args) => OpenProjectDialog();
+    private void OpenExampleClicked(object sender, RoutedEventArgs args) => OpenExample();
     private void SaveClicked(object sender, RoutedEventArgs args) => SaveProject(false);
+    private void SaveAsClicked(object sender, RoutedEventArgs args) => SaveProject(true);
     private void ExportPngClicked(object sender, RoutedEventArgs args) => Export("png", false);
+    private void ExportSvgClicked(object sender, RoutedEventArgs args) => Export("svg", false);
+    private void ExportSheetClicked(object sender, RoutedEventArgs args) => Export("png", true);
+    private void ExitClicked(object sender, RoutedEventArgs args) => Close();
     private void UndoClicked(object sender, RoutedEventArgs args) => Act(session.Undo);
     private void RedoClicked(object sender, RoutedEventArgs args) => Act(session.Redo);
+    private void CopyClicked(object sender, RoutedEventArgs args) => Copy();
+    private void CutClicked(object sender, RoutedEventArgs args) => Cut();
+    private void PasteClicked(object sender, RoutedEventArgs args) => Paste();
+    private void RotateClockwiseClicked(object sender, RoutedEventArgs args) => Act(() => session.RotateSelection(1));
+    private void RotateCounterclockwiseClicked(object sender, RoutedEventArgs args) => Act(() => session.RotateSelection(-1));
+    private void SelectAllClicked(object sender, RoutedEventArgs args) => Act(session.SelectAll);
+    private void DeselectClicked(object sender, RoutedEventArgs args) => Act(session.ClearSelection);
+    private void ClearClicked(object sender, RoutedEventArgs args) => Act(session.ClearPixels);
+    private void ToggleGridClicked(object sender, RoutedEventArgs args) => ToggleGrid();
     private void SmallerBrushClicked(object sender, RoutedEventArgs args) => ChangeBrush(-1);
     private void LargerBrushClicked(object sender, RoutedEventArgs args) => ChangeBrush(1);
     private void ZoomOutClicked(object sender, RoutedEventArgs args) => EditorCanvas.ChangeZoom(1 / 1.2f);
@@ -363,11 +434,20 @@ public partial class MainWindow : Window
     private void DeleteLayerClicked(object sender, RoutedEventArgs args) => Act(session.DeleteLayer);
     private void LayerUpClicked(object sender, RoutedEventArgs args) => Act(() => session.MoveLayer(1));
     private void LayerDownClicked(object sender, RoutedEventArgs args) => Act(() => session.MoveLayer(-1));
+
     private void RenameLayerClicked(object sender, RoutedEventArgs args)
     {
         var name = EditorDialogs.Prompt(this, "Rename layer", "Layer name", session.Document.Layers[session.ActiveLayer].Name);
         if (name != null) Act(() => session.SetLayerName(name));
     }
+
+    private void GridChanged(object sender, RoutedEventArgs args)
+    {
+        EditorCanvas.ShowGrid = ShowGrid.IsChecked == true;
+        GridMenuItem.Header = EditorCanvas.ShowGrid ? "Hide grid" : "Show grid";
+        EditorCanvas.InvalidateVisual();
+    }
+
     private void OpacityReleased(object sender, MouseButtonEventArgs args) => ApplyOpacity();
     private void OpacityKeyboardFinished(object sender, KeyboardFocusChangedEventArgs args) => ApplyOpacity();
     private void ApplyOpacity() { if (!refreshing) Act(() => session.SetLayerOpacity((byte)Math.Round(LayerOpacity.Value))); }
@@ -376,13 +456,16 @@ public partial class MainWindow : Window
     private void DeleteFrameClicked(object sender, RoutedEventArgs args) => Act(session.DeleteFrame);
     private void PlayClicked(object sender, RoutedEventArgs args) => TogglePlayback();
     private void OnionSkinChanged(object sender, RoutedEventArgs args) { EditorCanvas.ShowOnionSkin = OnionSkin.IsChecked == true; EditorCanvas.InvalidateVisual(); }
+
     private void SetDurationClicked(object sender, RoutedEventArgs args)
     {
         if (int.TryParse(DurationInput.Text, out var duration)) Act(() => session.SetFrameDuration(duration));
         else ShowError($"Enter a duration between {HexDocument.MinimumFrameDuration} and {HexDocument.MaximumFrameDuration} milliseconds.");
     }
+
     private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
     private void ColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetColorClicked(sender, args); args.Handled = true; } }
+
     private void AddColorClicked(object sender, RoutedEventArgs args)
     {
         var color = EditorCanvas.ForegroundColor;
@@ -392,13 +475,14 @@ public partial class MainWindow : Window
             : full ? $"The palette already holds its {HexDocument.MaximumPaletteColors} colors."
             : $"{ColorMath.Format(color)} is already in the palette.");
     }
+
     private void HelpClicked(object sender, RoutedEventArgs args) => EditorDialogs.ShowHelp(this);
 
     public void VerifyEditor(string folder)
     {
         var original = session.Document.CompositeAt(0, 0);
         session.Paint(session.Document.CoordinateAt(0), 0xFF00FF00); session.EndStroke();
-        if (!UndoButton.IsEnabled || !DocumentTitle.Text.EndsWith('*')) throw new InvalidOperationException("The interface did not reflect the edit.");
+        if (!UndoButton.IsEnabled || UnsavedMarker.Visibility != Visibility.Visible) throw new InvalidOperationException("The interface did not reflect the edit.");
         UndoButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         if (session.IsDirty || session.Document.CompositeAt(0, 0) != original) throw new InvalidOperationException("The Undo button did not restore the artwork.");
         toolButtons[DrawingTool.Eraser].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -430,6 +514,43 @@ public partial class MainWindow : Window
         if (blank.Pixels.Any(pixel => pixel.Alpha != 0)) throw new InvalidDataException("Empty exported cells are not transparent.");
         EditorCanvas.Fit(); UpdateLayout();
         File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nPNG export: {image.Width} x {image.Height}, all {roundTrip.CellCount} cell colors verified\nSprite sheet dimensions and SVG polygons: passed\nFlat-top transparent export: passed\n");
+    }
+
+    // Opening a menu leaves it highlighted, so this runs after the editor screenshot rather than inside VerifyEditor.
+    public void VerifyInterface(string folder)
+    {
+        VerifyMenu();
+        VerifyDialogs();
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"), "Menu bar and dialogs: passed\n");
+    }
+
+    private void VerifyMenu()
+    {
+        FileMenu.ApplyTemplate();
+        // A menu item refuses to open its submenu before it has been loaded, so let pending Loaded events run first.
+        Dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
+        FileMenu.IsSubmenuOpen = true;
+        UpdateLayout();
+        if (FileMenu.Template.FindName("Submenu", FileMenu) is not Popup { IsOpen: true, Child: FrameworkElement submenu })
+            throw new InvalidOperationException("The File menu did not open.");
+        submenu.UpdateLayout();
+        if (submenu.ActualWidth < 120 || submenu.ActualHeight < 120) throw new InvalidOperationException("The File menu rendered empty.");
+        FileMenu.IsSubmenuOpen = false;
+    }
+
+    // The dialogs build their visual tree in code from the application's styles, so measuring one proves those styles apply.
+    private static void VerifyDialogs()
+    {
+        var dialogs = new (string Name, FrameworkElement Content)[]
+        {
+            ("Shortcuts", EditorDialogs.HelpContent()),
+            ("New canvas", (FrameworkElement)new NewCanvasDialog().Content)
+        };
+        foreach (var (name, content) in dialogs)
+        {
+            content.Measure(new Size(560, 1000));
+            if (content.DesiredSize.Width < 200 || content.DesiredSize.Height < 200) throw new InvalidOperationException($"The {name} dialog did not lay out.");
+        }
     }
 
     public void VerifyCanvasRendered()
