@@ -232,6 +232,54 @@ public sealed class EditorTests
     [InlineData("80223344", 0x80223344u)]
     public void ColorParsingPreservesTransparency(string text, uint expected) => Assert.Equal(expected, ColorMath.Parse(text));
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("#")]
+    [InlineData("#12345")]
+    [InlineData("#1234567")]
+    [InlineData("#5CE4C2FF00")]
+    [InlineData("#5CE4CZ")]
+    [InlineData("#5C E4C2")]
+    public void MalformedColorTextIsRejected(string text) => Assert.Throws<FormatException>(() => ColorMath.Parse(text));
+
+    [Theory]
+    [InlineData(0xFF5CE4C2u)]
+    [InlineData(0x80223344u)]
+    [InlineData(0x00000000u)]
+    public void FormattedColorsParseBackToTheSameValue(uint color) => Assert.Equal(color, ColorMath.Parse(ColorMath.Format(color)));
+
+    [Fact]
+    public void CanvasDimensionErrorsNameTheDimensionThatIsOutOfRange()
+    {
+        Assert.Equal("width", Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(0, 20)).ParamName);
+        Assert.Equal("height", Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(20, 257)).ParamName);
+    }
+
+    [Fact]
+    public void FrameDurationsAreAcceptedOnlyWithinTheDocumentedRange()
+    {
+        var session = new EditorSession(new HexDocument(2, 2));
+        session.SetFrameDuration(HexDocument.MinimumFrameDuration);
+        Assert.Equal(HexDocument.MinimumFrameDuration, session.Document.Frames[0].DurationMilliseconds);
+        session.SetFrameDuration(HexDocument.MaximumFrameDuration);
+        Assert.Equal(HexDocument.MaximumFrameDuration, session.Document.Frames[0].DurationMilliseconds);
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetFrameDuration(HexDocument.MinimumFrameDuration - 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetFrameDuration(HexDocument.MaximumFrameDuration + 1));
+    }
+
+    [Fact]
+    public void ThePaletteRejectsDuplicatesAndStopsAtItsLimit()
+    {
+        var session = new EditorSession(new HexDocument(1, 1));
+        var starting = session.Document.Palette.Count;
+        Assert.True(session.AddPaletteColor(0xAABBCCDD));
+        Assert.False(session.AddPaletteColor(0xAABBCCDD));
+        Assert.Equal(starting + 1, session.Document.Palette.Count);
+        for (var color = 0u; session.Document.Palette.Count < HexDocument.MaximumPaletteColors; color++) session.AddPaletteColor(0xFF000000 | color);
+        Assert.False(session.AddPaletteColor(0xFFFFFFFE));
+        Assert.Equal(HexDocument.MaximumPaletteColors, session.Document.Palette.Count);
+    }
+
     [Fact]
     public void ArchiveRoundTripPreservesEveryCelAndMetadata()
     {
@@ -264,19 +312,50 @@ public sealed class EditorTests
         finally { File.Delete(path); }
     }
 
-    [Theory]
-    [InlineData("{}")]
-    [InlineData("{\"Format\":1,\"Width\":9999999,\"Height\":256}")]
-    [InlineData("{broken")]
-    public void MalformedArchivesAreRejectedBeforeAllocatingCellBuffers(string manifest)
+    [Fact]
+    public void AnOversizedManifestIsRejected()
     {
         var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + ".hexel");
         try
         {
             using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
-            using (var writer = new StreamWriter(archive.CreateEntry("Document.json").Open(), Encoding.UTF8)) writer.Write(manifest);
+            using (var writer = new StreamWriter(archive.CreateEntry("Document.json", CompressionLevel.Optimal).Open(), Encoding.UTF8))
+                writer.Write(new string(' ', 4 * 1024 * 1024));
             Assert.Throws<InvalidDataException>(() => ProjectFile.Load(path));
         }
         finally { File.Delete(path); }
     }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"Format\":1,\"Width\":9999999,\"Height\":256}")]
+    [InlineData("{broken")]
+    // The untampered manifest only fails on its absent cels, which proves the tampered values below are what the reader rejects.
+    [InlineData(ValidManifest)]
+    [InlineData(ValidManifest, "\"Format\":1", "\"Format\":2")]
+    [InlineData(ValidManifest, "\"Durations\":[150]", "\"Durations\":[19]")]
+    [InlineData(ValidManifest, "\"Durations\":[150]", "\"Durations\":[10001]")]
+    [InlineData(ValidManifest, "\"Palette\":[4278190080]", "\"Palette\":[]")]
+    [InlineData(ValidManifest, "\"Name\":\"Tampered\"", "\"Name\":null")]
+    [InlineData(ValidManifest, "\"Name\":\"Layer 1\"", "\"Name\":\" \"")]
+    public void MalformedArchivesAreRejectedBeforeAllocatingCellBuffers(string manifest, string? search = null, string? replacement = null)
+    {
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + ".hexel");
+        var reachesCells = manifest == ValidManifest && search == null;
+        if (search != null) { Assert.Contains(search, manifest); manifest = manifest.Replace(search, replacement); }
+        try
+        {
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(archive.CreateEntry("Document.json").Open(), Encoding.UTF8)) writer.Write(manifest);
+            var failure = Assert.Throws<InvalidDataException>(() => ProjectFile.Load(path));
+            Assert.Equal(reachesCells, failure.Message.Contains("missing cell data"));
+        }
+        finally { File.Delete(path); }
+    }
+
+    private const string ValidManifest = """
+        {"Format":1,"Name":"Tampered","Width":2,"Height":2,"Orientation":0,
+         "Layers":[{"Name":"Layer 1","Visible":true,"Locked":false,"Opacity":255}],
+         "Durations":[150],"Palette":[4278190080]}
+        """;
 }

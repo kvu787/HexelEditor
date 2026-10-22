@@ -5,6 +5,7 @@ public enum EditorChange { Pixels = 1, Structure = 2, Selection = 4, History = 8
 
 public sealed class EditorSession
 {
+    public const int MaximumBrushRadius = 8;
     private const long HistoryBudget = 64 * 1024 * 1024;
     private readonly List<HistoryItem> undo = [];
     private readonly List<HistoryItem> redo = [];
@@ -48,7 +49,7 @@ public sealed class EditorSession
     {
         if (!CanPaint) return;
         BeginStroke();
-        foreach (var coordinate in center.Disk(Math.Clamp(radius, 0, 8))) SetPixel(Document.IndexOf(coordinate), color);
+        foreach (var coordinate in center.Disk(Math.Clamp(radius, 0, MaximumBrushRadius))) SetPixel(Document.IndexOf(coordinate), color);
         Notify(EditorChange.Pixels);
     }
 
@@ -273,7 +274,12 @@ public sealed class EditorSession
     public void SetLayerVisible(int index, bool visible) { if (Document.Layers[index].Visible != visible) ChangeDocument("Layer visibility", () => Document.Layers[index].Visible = visible); }
     public void SetLayerLocked(int index, bool locked) { if (Document.Layers[index].Locked != locked) ChangeDocument("Layer lock", () => Document.Layers[index].Locked = locked); }
     public void SetLayerOpacity(byte opacity) { if (Document.Layers[ActiveLayer].Opacity != opacity) ChangeDocument("Layer opacity", () => Document.Layers[ActiveLayer].Opacity = opacity); }
-    public void AddPaletteColor(uint color) { if (!Document.Palette.Contains(color) && Document.Palette.Count < 256) ChangeDocument("Add palette color", () => Document.Palette.Add(color)); }
+    public bool AddPaletteColor(uint color)
+    {
+        if (Document.Palette.Contains(color) || Document.Palette.Count >= HexDocument.MaximumPaletteColors) return false;
+        ChangeDocument("Add palette color", () => Document.Palette.Add(color));
+        return true;
+    }
 
     public void AddFrame(bool duplicate)
     {
@@ -294,7 +300,8 @@ public sealed class EditorSession
 
     public void SetFrameDuration(int duration)
     {
-        if (duration is < 20 or > 10000) throw new ArgumentOutOfRangeException(nameof(duration), "Duration must be between 20 and 10000 milliseconds.");
+        if (duration is < HexDocument.MinimumFrameDuration or > HexDocument.MaximumFrameDuration)
+            throw new ArgumentOutOfRangeException(nameof(duration), duration, $"Duration must be between {HexDocument.MinimumFrameDuration} and {HexDocument.MaximumFrameDuration} milliseconds.");
         if (Document.Frames[ActiveFrame].DurationMilliseconds != duration) ChangeDocument("Frame duration", () => Document.Frames[ActiveFrame].DurationMilliseconds = duration);
     }
 

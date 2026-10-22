@@ -1,10 +1,12 @@
 using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 
 namespace HexelEditor.Core;
 
 public static class ProjectFile
 {
+    private const int ManifestByteLimit = 128 * 1024;
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static void Save(HexDocument document, string path)
@@ -37,12 +39,19 @@ public static class ProjectFile
     {
         using var archive = ZipFile.OpenRead(path);
         var entry = archive.GetEntry("Document.json") ?? throw new InvalidDataException("The project has no document manifest.");
-        if (entry.Length > 128 * 1024) throw new InvalidDataException("The document manifest is too large.");
+        if (entry.Length > ManifestByteLimit) throw new InvalidDataException("The document manifest is too large.");
         Manifest metadata;
         try
         {
+            // An archive states its own entry sizes, so the read is bounded rather than trusting the declared length.
             using var stream = entry.Open();
-            metadata = JsonSerializer.Deserialize<Manifest>(stream) ?? throw new InvalidDataException("The document manifest is empty.");
+            var manifestBytes = new byte[ManifestByteLimit + 1];
+            var manifestLength = stream.ReadAtLeast(manifestBytes, manifestBytes.Length, throwOnEndOfStream: false);
+            if (manifestLength > ManifestByteLimit) throw new InvalidDataException("The document manifest is too large.");
+            var manifestText = manifestBytes.AsSpan(0, manifestLength);
+            // Reading bytes rather than a stream means the byte order mark, which editors add, has to be skipped here.
+            if (manifestText.StartsWith(Encoding.UTF8.Preamble)) manifestText = manifestText[Encoding.UTF8.Preamble.Length..];
+            metadata = JsonSerializer.Deserialize<Manifest>(manifestText) ?? throw new InvalidDataException("The document manifest is empty.");
         }
         catch (JsonException exception) { throw new InvalidDataException("The document manifest is invalid.", exception); }
         if (metadata.Format != 1 || metadata.Width is < 1 or > HexDocument.MaximumDimension || metadata.Height is < 1 or > HexDocument.MaximumDimension || !Enum.IsDefined(metadata.Orientation))
@@ -50,7 +59,8 @@ public static class ProjectFile
         if (metadata.Layers == null || metadata.Durations == null || metadata.Palette == null || metadata.Name == null || metadata.Name.Length > 256 ||
             metadata.Layers.Length is < 1 or > HexDocument.MaximumLayers || metadata.Durations.Length is < 1 or > HexDocument.MaximumFrames ||
             (long)metadata.Width * metadata.Height * metadata.Layers.Length * metadata.Durations.Length > HexDocument.MaximumTotalCells ||
-            metadata.Palette.Length is < 1 or > 256 || metadata.Durations.Any(duration => duration is < 20 or > 10000) ||
+            metadata.Palette.Length is < 1 or > HexDocument.MaximumPaletteColors ||
+            metadata.Durations.Any(duration => duration is < HexDocument.MinimumFrameDuration or > HexDocument.MaximumFrameDuration) ||
             metadata.Layers.Any(layer => layer == null || string.IsNullOrWhiteSpace(layer.Name) || layer.Name.Length > 256))
             throw new InvalidDataException("The project contains invalid layers, frames, or palette data.");
         var document = new HexDocument(metadata.Width, metadata.Height, metadata.Orientation) { Name = metadata.Name };

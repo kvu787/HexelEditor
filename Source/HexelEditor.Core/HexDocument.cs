@@ -26,6 +26,9 @@ public sealed class HexDocument
     public const int MaximumDimension = 256;
     public const int MaximumLayers = 32;
     public const int MaximumFrames = 128;
+    public const int MaximumPaletteColors = 256;
+    public const int MinimumFrameDuration = 20;
+    public const int MaximumFrameDuration = 10_000;
     public const long MaximumTotalCells = 16_777_216;
     public string Name { get; set; } = "Untitled";
     public int Width { get; }
@@ -46,8 +49,10 @@ public sealed class HexDocument
 
     public HexDocument(int width, int height, HexOrientation orientation = HexOrientation.PointyTop)
     {
-        if (width is < 1 or > MaximumDimension || height is < 1 or > MaximumDimension)
-            throw new ArgumentOutOfRangeException(nameof(width), "Canvas dimensions must be between 1 and 256.");
+        if (width is < 1 or > MaximumDimension)
+            throw new ArgumentOutOfRangeException(nameof(width), width, $"Canvas width must be between 1 and {MaximumDimension}.");
+        if (height is < 1 or > MaximumDimension)
+            throw new ArgumentOutOfRangeException(nameof(height), height, $"Canvas height must be between 1 and {MaximumDimension}.");
         if (!Enum.IsDefined(orientation)) throw new ArgumentOutOfRangeException(nameof(orientation));
         Width = width;
         Height = height;
@@ -78,7 +83,7 @@ public sealed class HexDocument
     public void ValidateCapacity(int layers, int frames)
     {
         if (layers is < 1 or > MaximumLayers || frames is < 1 or > MaximumFrames || (long)CellCount * layers * frames > MaximumTotalCells)
-            throw new InvalidOperationException("The document limit is 32 layers, 128 frames, and 16 million total cells.");
+            throw new InvalidOperationException($"The document limit is {MaximumLayers} layers, {MaximumFrames} frames, and {MaximumTotalCells} total cells.");
     }
 
     public HexDocument Clone()
