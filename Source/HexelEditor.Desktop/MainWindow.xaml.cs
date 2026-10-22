@@ -6,7 +6,6 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using HexelEditor.Core;
@@ -17,18 +16,14 @@ namespace HexelEditor.Desktop;
 public partial class MainWindow : Window
 {
     private EditorSession session = new(ExampleDocument.Create());
-    private readonly DispatcherTimer playback = new();
     private readonly Dictionary<DrawingTool, Button> toolButtons = [];
     private readonly Dictionary<DrawingTool, System.Windows.Shapes.Path> toolIcons = [];
-    private readonly Dictionary<int, BitmapSource> thumbnails = [];
     private CellClipboard? clipboard;
     private string? projectPath;
     private bool refreshing;
     private readonly Brush ink;
     private readonly Brush strongInk;
     private readonly Brush muted;
-    private readonly Brush divider;
-    private readonly Style frameStyle;
     private readonly Style listRowStyle;
     private readonly Style swatchStyle;
     private readonly Style toolbarButtonStyle;
@@ -39,8 +34,6 @@ public partial class MainWindow : Window
         ink = (Brush)FindResource("Ink");
         strongInk = (Brush)FindResource("StrongInk");
         muted = (Brush)FindResource("Muted");
-        divider = (Brush)FindResource("Divider");
-        frameStyle = (Style)FindResource("FrameButton");
         listRowStyle = (Style)FindResource("ListRow");
         swatchStyle = (Style)FindResource("SwatchButton");
         toolbarButtonStyle = (Style)FindResource("ToolbarButton");
@@ -52,11 +45,6 @@ public partial class MainWindow : Window
         FilledShapes.Checked += (_, _) => EditorCanvas.FilledShapes = true;
         FilledShapes.Unchecked += (_, _) => EditorCanvas.FilledShapes = false;
         ShowGrid.IsChecked = EditorCanvas.ShowGrid;
-        playback.Tick += (_, _) =>
-        {
-            session.SelectFrame((session.ActiveFrame + 1) % session.Document.Frames.Count);
-            playback.Interval = TimeSpan.FromMilliseconds(session.Document.Frames[session.ActiveFrame].DurationMilliseconds);
-        };
         AttachSession(session);
         SetColor(0xFF000000);
         SetTool(DrawingTool.Pencil);
@@ -66,10 +54,10 @@ public partial class MainWindow : Window
 
     private void AttachSession(EditorSession value)
     {
-        StopPlayback(); session.Changed -= SessionChanged; session = value;
+        session.Changed -= SessionChanged; session = value;
         session.SelectLayer(session.Document.Layers.Count - 1);
         session.Changed += SessionChanged;
-        thumbnails.Clear(); EditorCanvas.Attach(session); RefreshPanels(); UpdateHeader();
+        EditorCanvas.Attach(session); RefreshPanels(); UpdateHeader();
     }
 
     private void BuildTools()
@@ -138,10 +126,7 @@ public partial class MainWindow : Window
 
     private void SessionChanged(EditorChange change)
     {
-        if ((change & EditorChange.Document) != 0) thumbnails.Clear();
-        else if ((change & EditorChange.Pixels) != 0) thumbnails.Remove(session.ActiveFrame);
         if ((change & EditorChange.Structure) != 0) RefreshPanels();
-        else if ((change & EditorChange.History) != 0) RefreshFrames();
         EditorCanvas.InvalidateVisual(); UpdateHeader();
     }
 
@@ -161,7 +146,7 @@ public partial class MainWindow : Window
         CutMenuItem.IsEnabled = ClearMenuItem.IsEnabled = session.CanPaint;
         PasteMenuItem.IsEnabled = clipboard != null && session.CanPaint;
         RotateClockwiseMenuItem.IsEnabled = RotateCounterclockwiseMenuItem.IsEnabled = session.Selection.Count > 0 && session.CanPaint;
-        SelectionStatus.Text = $"{(session.Selection.Count > 0 ? $"{session.Selection.Count} selected  |  " : "")}{(session.CanPaint ? "" : "Layer locked  |  ")}Frame {session.ActiveFrame + 1} / {session.Document.Frames.Count}";
+        SelectionStatus.Text = string.Join("  |  ", new[] { session.Selection.Count > 0 ? $"{session.Selection.Count} selected" : "", session.CanPaint ? "" : "Layer locked" }.Where(text => text.Length > 0));
     }
 
     private void RefreshPanels()
@@ -169,12 +154,10 @@ public partial class MainWindow : Window
         refreshing = true;
         try
         {
-            RefreshPalette(); RefreshLayers(); RefreshFrames();
+            RefreshPalette(); RefreshLayers();
             LayerOpacity.Value = session.Document.Layers[session.ActiveLayer].Opacity;
             OpacityLabel.Text = $"{LayerOpacity.Value / 255 * 100:0}%";
-            DurationInput.Text = session.Document.Frames[session.ActiveFrame].DurationMilliseconds.ToString();
             DeleteLayerButton.IsEnabled = session.Document.Layers.Count > 1;
-            DeleteFrameButton.IsEnabled = session.Document.Frames.Count > 1;
         }
         finally { refreshing = false; }
     }
@@ -235,39 +218,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshFrames()
-    {
-        FramesPanel.Children.Clear();
-        for (var index = 0; index < session.Document.Frames.Count; index++)
-        {
-            var frameIndex = index; var active = index == session.ActiveFrame;
-            if (!thumbnails.TryGetValue(index, out var thumbnail)) { thumbnail = ArtworkRenderer.Thumbnail(session.Document, index); thumbnails.Add(index, thumbnail); }
-            var content = new StackPanel();
-            content.Children.Add(new Border
-            {
-                Child = new Image { Source = thumbnail, Width = ArtworkRenderer.ThumbnailWidth, Height = ArtworkRenderer.ThumbnailHeight, Stretch = Stretch.Uniform },
-                BorderBrush = divider,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(2)
-            });
-            content.Children.Add(new TextBlock
-            {
-                Text = $"{index + 1:00}   {session.Document.Frames[index].DurationMilliseconds} ms",
-                FontSize = 13,
-                Foreground = active ? strongInk : muted,
-                Margin = new Thickness(0, 6, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Center
-            });
-            var button = new Button { Content = content, Style = frameStyle, Tag = active ? "Active" : null, ToolTip = $"Frame {index + 1}" };
-            AutomationProperties.SetName(button, $"Frame {index + 1}");
-            button.Click += (_, _) => Act(() => session.SelectFrame(frameIndex));
-            FramesPanel.Children.Add(button);
-        }
-    }
-
     private void Act(Action action)
     {
-        StopPlayback(); EditorCanvas.FinishGesture();
+        EditorCanvas.FinishGesture();
         try { action(); }
         catch (Exception exception) when (exception is InvalidOperationException or ArgumentException or FormatException) { ShowError(exception.Message, exception); }
     }
@@ -291,7 +244,7 @@ public partial class MainWindow : Window
 
     private bool CanReplaceDocument()
     {
-        EditorCanvas.FinishGesture(); StopPlayback();
+        EditorCanvas.FinishGesture();
         if (!session.IsDirty) return true;
         var result = MessageBox.Show(this, "Save your changes before continuing?", "Unsaved artwork", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
         return result == MessageBoxResult.No || (result == MessageBoxResult.Yes && SaveProject(false));
@@ -312,7 +265,7 @@ public partial class MainWindow : Window
 
     private bool SaveProject(bool saveAs)
     {
-        EditorCanvas.FinishGesture(); StopPlayback();
+        EditorCanvas.FinishGesture();
         var path = projectPath;
         if (path == null || saveAs)
         {
@@ -324,29 +277,19 @@ public partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { ShowError($"Could not save the project.\n\n{exception.Message}", exception); return false; }
     }
 
-    private void Export(string format, bool sheet)
+    private void Export(string format)
     {
-        StopPlayback(); EditorCanvas.FinishGesture();
-        var dialog = new SaveFileDialog { Filter = format == "svg" ? "SVG artwork (*.svg)|*.svg" : "PNG image (*.png)|*.png", DefaultExt = "." + format, FileName = session.Document.Name + (sheet ? " Sheet" : "") };
+        EditorCanvas.FinishGesture();
+        var dialog = new SaveFileDialog { Filter = format == "svg" ? "SVG artwork (*.svg)|*.svg" : "PNG image (*.png)|*.png", DefaultExt = "." + format, FileName = session.Document.Name };
         if (dialog.ShowDialog(this) != true) return;
         try
         {
             if (format == "svg") ArtworkRenderer.ExportSvg(session.Document, session.ActiveFrame, dialog.FileName);
-            else ArtworkRenderer.ExportPng(session.Document, session.ActiveFrame, dialog.FileName, sheet);
+            else ArtworkRenderer.ExportPng(session.Document, session.ActiveFrame, dialog.FileName);
             StatusLabel.Text = $"Exported {System.IO.Path.GetFileName(dialog.FileName)}";
             App.Log.Write($"Exported artwork: {dialog.FileName}");
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { ShowError($"Could not export.\n\n{exception.Message}", exception); }
-    }
-
-    private void StopPlayback() { playback.Stop(); EditorCanvas.IsPlaying = false; PlayButton.Content = "Play"; EditorCanvas.InvalidateVisual(); }
-
-    private void TogglePlayback()
-    {
-        EditorCanvas.FinishGesture();
-        if (playback.IsEnabled) { StopPlayback(); return; }
-        EditorCanvas.IsPlaying = true; PlayButton.Content = "Stop";
-        playback.Interval = TimeSpan.FromMilliseconds(session.Document.Frames[session.ActiveFrame].DurationMilliseconds); playback.Start();
     }
 
     private void Copy() { EditorCanvas.FinishGesture(); clipboard = session.CopySelection(); StatusLabel.Text = "Copied cells. Hover the destination and press Ctrl+V to paste."; UpdateHeader(); }
@@ -392,27 +335,24 @@ public partial class MainWindow : Window
             case Key.OemPlus: case Key.Add: EditorCanvas.ChangeZoom(1.2f); break; case Key.OemMinus: case Key.Subtract: EditorCanvas.ChangeZoom(1 / 1.2f); break;
             case Key.Delete: case Key.Back: Act(session.ClearPixels); break;
             case Key.Escape: Act(session.ClearSelection); break;
-            case Key.Space: EditorCanvas.SpacePressed = true; break; case Key.Enter: if (!args.IsRepeat) TogglePlayback(); break;
+            case Key.Space: EditorCanvas.SpacePressed = true; break;
             case Key.Left: Act(() => session.MoveSelection(-1, 0)); break; case Key.Right: Act(() => session.MoveSelection(1, 0)); break;
             case Key.Up: Act(() => session.MoveSelection(0, -1)); break; case Key.Down: Act(() => session.MoveSelection(0, 1)); break;
-            case Key.OemComma: Act(() => session.SelectFrame((session.ActiveFrame + session.Document.Frames.Count - 1) % session.Document.Frames.Count)); break;
-            case Key.OemPeriod: Act(() => session.SelectFrame((session.ActiveFrame + 1) % session.Document.Frames.Count)); break;
             default: return;
         }
         args.Handled = true;
     }
 
     private void OnKeyUp(object sender, KeyEventArgs args) { if (args.Key == Key.Space) EditorCanvas.SpacePressed = false; }
-    private void OnClosing(object? sender, CancelEventArgs args) { if (!CanReplaceDocument()) args.Cancel = true; else StopPlayback(); }
+    private void OnClosing(object? sender, CancelEventArgs args) { if (!CanReplaceDocument()) args.Cancel = true; }
 
     private void NewProjectClicked(object sender, RoutedEventArgs args) => NewProject();
     private void OpenClicked(object sender, RoutedEventArgs args) => OpenProjectDialog();
     private void OpenExampleClicked(object sender, RoutedEventArgs args) => OpenExample();
     private void SaveClicked(object sender, RoutedEventArgs args) => SaveProject(false);
     private void SaveAsClicked(object sender, RoutedEventArgs args) => SaveProject(true);
-    private void ExportPngClicked(object sender, RoutedEventArgs args) => Export("png", false);
-    private void ExportSvgClicked(object sender, RoutedEventArgs args) => Export("svg", false);
-    private void ExportSheetClicked(object sender, RoutedEventArgs args) => Export("png", true);
+    private void ExportPngClicked(object sender, RoutedEventArgs args) => Export("png");
+    private void ExportSvgClicked(object sender, RoutedEventArgs args) => Export("svg");
     private void ExitClicked(object sender, RoutedEventArgs args) => Close();
     private void UndoClicked(object sender, RoutedEventArgs args) => Act(session.Undo);
     private void RedoClicked(object sender, RoutedEventArgs args) => Act(session.Redo);
@@ -451,17 +391,6 @@ public partial class MainWindow : Window
     private void OpacityReleased(object sender, MouseButtonEventArgs args) => ApplyOpacity();
     private void OpacityKeyboardFinished(object sender, KeyboardFocusChangedEventArgs args) => ApplyOpacity();
     private void ApplyOpacity() { if (!refreshing) Act(() => session.SetLayerOpacity((byte)Math.Round(LayerOpacity.Value))); }
-    private void AddFrameClicked(object sender, RoutedEventArgs args) => Act(() => session.AddFrame(false));
-    private void DuplicateFrameClicked(object sender, RoutedEventArgs args) => Act(() => session.AddFrame(true));
-    private void DeleteFrameClicked(object sender, RoutedEventArgs args) => Act(session.DeleteFrame);
-    private void PlayClicked(object sender, RoutedEventArgs args) => TogglePlayback();
-    private void OnionSkinChanged(object sender, RoutedEventArgs args) { EditorCanvas.ShowOnionSkin = OnionSkin.IsChecked == true; EditorCanvas.InvalidateVisual(); }
-
-    private void SetDurationClicked(object sender, RoutedEventArgs args)
-    {
-        if (int.TryParse(DurationInput.Text, out var duration)) Act(() => session.SetFrameDuration(duration));
-        else ShowError($"Enter a duration between {HexDocument.MinimumFrameDuration} and {HexDocument.MaximumFrameDuration} milliseconds.");
-    }
 
     private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
     private void ColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetColorClicked(sender, args); args.Handled = true; } }
@@ -492,8 +421,7 @@ public partial class MainWindow : Window
         var path = System.IO.Path.Combine(folder, "Example.hexel"); ProjectFile.Save(session.Document, path);
         var roundTrip = ProjectFile.Load(path);
         if (roundTrip.Frames.Count != 4 || roundTrip.CompositeAt(0, 0) != session.Document.CompositeAt(0, 0)) throw new InvalidDataException("Project round trip failed.");
-        ArtworkRenderer.ExportPng(roundTrip, 0, System.IO.Path.Combine(folder, "Artwork.png"), false);
-        ArtworkRenderer.ExportPng(roundTrip, 0, System.IO.Path.Combine(folder, "SpriteSheet.png"), true);
+        ArtworkRenderer.ExportPng(roundTrip, 0, System.IO.Path.Combine(folder, "Artwork.png"));
         ArtworkRenderer.ExportSvg(roundTrip, 0, System.IO.Path.Combine(folder, "Artwork.svg"));
         using var image = SkiaSharp.SKBitmap.Decode(System.IO.Path.Combine(folder, "Artwork.png"));
         if (image == null || image.Width < 100 || image.Height < 100) throw new InvalidDataException("PNG export verification failed.");
@@ -504,16 +432,14 @@ public partial class MainWindow : Window
             var pixel = image.GetPixel((int)Math.Round(x + 1 - bounds.Left * 16 / ArtworkRenderer.CellRadius), (int)Math.Round(y + 1 - bounds.Top * 16 / ArtworkRenderer.CellRadius));
             if ((uint)pixel != roundTrip.CompositeAt(index, 0)) throw new InvalidDataException($"PNG color mismatch at cell {index}.");
         }
-        using var sheet = SkiaSharp.SKBitmap.Decode(System.IO.Path.Combine(folder, "SpriteSheet.png"));
-        if (sheet.Width != image.Width * roundTrip.Frames.Count || sheet.Height != image.Height) throw new InvalidDataException("Sprite sheet dimensions are incorrect.");
         var svg = System.Xml.Linq.XDocument.Load(System.IO.Path.Combine(folder, "Artwork.svg"));
         if (svg.Root?.Elements().Count() != roundTrip.CellCount) throw new InvalidDataException("SVG geometry is incomplete.");
         var blankPath = System.IO.Path.Combine(folder, "Transparent.png");
-        ArtworkRenderer.ExportPng(new HexDocument(1, 1, HexOrientation.FlatTop), 0, blankPath, false);
+        ArtworkRenderer.ExportPng(new HexDocument(1, 1, HexOrientation.FlatTop), 0, blankPath);
         using var blank = SkiaSharp.SKBitmap.Decode(blankPath);
         if (blank.Pixels.Any(pixel => pixel.Alpha != 0)) throw new InvalidDataException("Empty exported cells are not transparent.");
         EditorCanvas.Fit(); UpdateLayout();
-        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nPNG export: {image.Width} x {image.Height}, all {roundTrip.CellCount} cell colors verified\nSprite sheet dimensions and SVG polygons: passed\nFlat-top transparent export: passed\n");
+        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nPNG export: {image.Width} x {image.Height}, all {roundTrip.CellCount} cell colors verified\nSVG polygons: passed\nFlat-top transparent export: passed\n");
     }
 
     // Opening a menu leaves it highlighted, so this runs after the editor screenshot rather than inside VerifyEditor.

@@ -65,10 +65,8 @@ public static class EditorDialogs
             ("Select all / deselect", "Ctrl+A / Ctrl+D"),
             ("Move selected cells", "Arrow keys"),
             ("Rotate selection 60 degrees", "Ctrl+R / Ctrl+Shift+R"),
-            ("Clear selected cells or the cel", "Delete"),
-            ("Play / stop", "Enter"),
-            ("Previous / next frame", ", / ."),
-            ("Deselect and stop playback", "Esc")
+            ("Clear selected cells or the layer", "Delete"),
+            ("Deselect", "Esc")
         };
         var panel = new StackPanel { Margin = new Thickness(26) };
         panel.Children.Add(Heading("Shortcuts"));

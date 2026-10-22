@@ -29,10 +29,8 @@ public sealed class HexCanvas : SKElement
     public uint ForegroundColor { get; set; } = 0xFF000000;
     public int BrushRadius { get; set; }
     public bool ShowGrid { get; set; } = true;
-    public bool ShowOnionSkin { get; set; }
     public bool FilledShapes { get; set; }
     public bool SpacePressed { get; set; }
-    public bool IsPlaying { get; set; }
     public HexCoordinate? HoverCoordinate => hover;
     public event Action<string>? StatusChanged;
     public event Action<uint>? ColorPicked;
@@ -87,7 +85,7 @@ public sealed class HexCanvas : SKElement
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
-        ArtworkRenderer.Draw(canvas, session.Document, session.ActiveFrame, true, ShowGrid, Zoom, ShowOnionSkin && !IsPlaying);
+        ArtworkRenderer.Draw(canvas, session.Document, session.ActiveFrame, true, ShowGrid, Zoom);
         using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
         using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(0, 95, 184, 40) };
@@ -118,7 +116,7 @@ public sealed class HexCanvas : SKElement
                 for (var column = left; column <= right; column++)
                     if (FilledShapes || row == top || row == bottom || column == left || column == right) Highlight(HexGeometry.FromOffset(column, row, session.Document.Orientation), true);
         }
-        if (!IsPlaying && hover.HasValue && !panning)
+        if (hover.HasValue && !panning)
         {
             outline.Color = session.CanPaint ? new SKColor(31, 31, 31) : new SKColor(196, 43, 28);
             foreach (var cell in hover.Value.Disk(Tool is DrawingTool.Pencil or DrawingTool.Eraser ? BrushRadius : 0)) Highlight(cell, false, true);
@@ -133,7 +131,7 @@ public sealed class HexCanvas : SKElement
         {
             panning = true; panPoint = point; Cursor = Cursors.ScrollAll; CaptureMouse(); args.Handled = true; return;
         }
-        if (IsPlaying || args.ChangedButton is not (MouseButton.Left or MouseButton.Right)) return;
+        if (args.ChangedButton is not (MouseButton.Left or MouseButton.Right)) return;
         hover = Coordinate(point);
         if (session.Document.IndexOf(hover.Value) < 0) return;
         eraseGesture = args.ChangedButton == MouseButton.Right;

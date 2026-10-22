@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Windows.Media.Imaging;
 using HexelEditor.Core;
 using SkiaSharp;
 
@@ -10,8 +9,6 @@ namespace HexelEditor.Desktop;
 public static class ArtworkRenderer
 {
     public const float CellRadius = 12;
-    public const int ThumbnailWidth = 120;
-    public const int ThumbnailHeight = 74;
 
     public static SKRect Bounds(HexDocument document, float radius = CellRadius)
     {
@@ -37,7 +34,7 @@ public static class ArtworkRenderer
         path.Close(); return path.Detach();
     }
 
-    public static void Draw(SKCanvas canvas, HexDocument document, int frameIndex, bool paper = false, bool grid = false, float zoom = 1, bool onion = false)
+    public static void Draw(SKCanvas canvas, HexDocument document, int frameIndex, bool paper = false, bool grid = false, float zoom = 1)
     {
         using var path = Hexagon(document.Orientation);
         using var fill = new SKPaint { IsAntialias = true };
@@ -54,12 +51,6 @@ public static class ArtworkRenderer
                 fill.Color = (index % document.Width + index / document.Width) % 2 == 0 ? new SKColor(255, 255, 255) : new SKColor(233, 233, 233);
                 canvas.DrawPath(path, fill);
             }
-            if (onion && frameIndex > 0)
-            {
-                var previous = document.CompositeAt(index, frameIndex - 1);
-                fill.Color = new SKColor((byte)(previous >> 16), (byte)(previous >> 8), (byte)previous, (byte)((previous >> 24) * 0.25));
-                canvas.DrawPath(path, fill);
-            }
             var color = document.CompositeAt(index, frameIndex);
             if ((color >> 24) > 0)
             {
@@ -71,38 +62,17 @@ public static class ArtworkRenderer
         }
     }
 
-    public static BitmapSource Thumbnail(HexDocument document, int frameIndex)
-    {
-        using var surface = SKSurface.Create(new SKImageInfo(ThumbnailWidth, ThumbnailHeight));
-        surface.Canvas.Clear(new SKColor(255, 255, 255));
-        var bounds = Bounds(document);
-        var scale = Math.Min((ThumbnailWidth - 8) / bounds.Width, (ThumbnailHeight - 8) / bounds.Height);
-        surface.Canvas.Translate((ThumbnailWidth - bounds.Width * scale) / 2 - bounds.Left * scale, (ThumbnailHeight - bounds.Height * scale) / 2 - bounds.Top * scale);
-        surface.Canvas.Scale(scale);
-        Draw(surface.Canvas, document, frameIndex);
-        using var snapshot = surface.Snapshot(); using var data = snapshot.Encode(SKEncodedImageFormat.Png, 100);
-        using var stream = new MemoryStream(data.ToArray());
-        var bitmap = new BitmapImage(); bitmap.BeginInit(); bitmap.CacheOption = BitmapCacheOption.OnLoad; bitmap.StreamSource = stream; bitmap.EndInit(); bitmap.Freeze();
-        return bitmap;
-    }
-
-    public static void ExportPng(HexDocument document, int activeFrame, string path, bool spriteSheet)
+    public static void ExportPng(HexDocument document, int frameIndex, string path)
     {
         const float exportScale = 16f / CellRadius;
         var bounds = Bounds(document);
-        var frameWidth = (int)Math.Ceiling(bounds.Width * exportScale) + 2;
+        var width = (int)Math.Ceiling(bounds.Width * exportScale) + 2;
         var height = (int)Math.Ceiling(bounds.Height * exportScale) + 2;
-        var count = spriteSheet ? document.Frames.Count : 1;
-        var width = checked(frameWidth * count);
-        if (width > 32768 || height > 32768 || (long)width * height > 64_000_000) throw new InvalidOperationException("This export is too large. Export individual frames or use a smaller canvas.");
+        if (width > 32768 || height > 32768 || (long)width * height > 64_000_000) throw new InvalidOperationException("This export is too large. Use a smaller canvas.");
         using var surface = SKSurface.Create(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul)) ?? throw new InvalidOperationException("Could not create the export image.");
         surface.Canvas.Clear(SKColors.Transparent);
-        for (var frame = 0; frame < count; frame++)
-        {
-            surface.Canvas.Save(); surface.Canvas.Translate(frame * frameWidth + 1 - bounds.Left * exportScale, 1 - bounds.Top * exportScale); surface.Canvas.Scale(exportScale);
-            Draw(surface.Canvas, document, spriteSheet ? frame : activeFrame);
-            surface.Canvas.Restore();
-        }
+        surface.Canvas.Translate(1 - bounds.Left * exportScale, 1 - bounds.Top * exportScale); surface.Canvas.Scale(exportScale);
+        Draw(surface.Canvas, document, frameIndex);
         using var image = surface.Snapshot(); using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var output = File.Create(path); data.SaveTo(output);
     }

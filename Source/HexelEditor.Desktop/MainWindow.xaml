@@ -33,7 +33,6 @@
             <Separator />
             <MenuItem Header="Export PNG..." Click="ExportPngClicked" />
             <MenuItem Header="Export SVG..." Click="ExportSvgClicked" />
-            <MenuItem Header="Export sprite sheet..." Click="ExportSheetClicked" />
             <Separator />
             <MenuItem Header="Exit" InputGestureText="Alt+F4" Click="ExitClicked" />
           </MenuItem>
@@ -114,7 +113,6 @@
         <Grid.RowDefinitions>
           <RowDefinition Height="36" />
           <RowDefinition Height="*" />
-          <RowDefinition Height="178" />
         </Grid.RowDefinitions>
 
         <!-- Document tab -->
@@ -136,36 +134,6 @@
         </Border>
 
         <local:HexCanvas x:Name="EditorCanvas" Grid.Row="1" Focusable="True" ClipToBounds="True" />
-
-        <!-- Timeline -->
-        <Border Grid.Row="2" BorderBrush="{StaticResource Divider}" BorderThickness="0,1,0,0">
-          <Grid>
-            <Grid.RowDefinitions>
-              <RowDefinition Height="38" />
-              <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <DockPanel Margin="16,0">
-              <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="New frame" Click="AddFrameClicked" Style="{StaticResource ToolbarButton}" />
-                <Button Content="Duplicate" Click="DuplicateFrameClicked" Style="{StaticResource ToolbarButton}" />
-                <Button x:Name="DeleteFrameButton" Content="Delete" Click="DeleteFrameClicked"
-                        Style="{StaticResource ToolbarButton}" />
-              </StackPanel>
-              <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="Timeline" FontWeight="SemiBold" Foreground="{StaticResource StrongInk}"
-                           VerticalAlignment="Center" />
-                <Button x:Name="PlayButton" Content="Play" Click="PlayClicked" Margin="16,0,0,0" Padding="16,5"
-                        ToolTip="Play or stop the animation (Enter)" />
-                <CheckBox x:Name="OnionSkin" Content="Onion skin" Margin="16,0,0,0" VerticalAlignment="Center"
-                          Checked="OnionSkinChanged" Unchecked="OnionSkinChanged" />
-              </StackPanel>
-            </DockPanel>
-            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
-                          Padding="16,0,16,0">
-              <StackPanel x:Name="FramesPanel" Orientation="Horizontal" />
-            </ScrollViewer>
-          </Grid>
-        </Border>
       </Grid>
 
       <!-- Side bar -->
@@ -220,14 +188,6 @@
                         IsMoveToPointEnabled="True" PreviewMouseLeftButtonUp="OpacityReleased"
                         LostKeyboardFocus="OpacityKeyboardFinished" />
               </StackPanel>
-            </Expander>
-
-            <Expander Header="Frame" Style="{StaticResource Section}">
-              <DockPanel Margin="0,4,0,0">
-                <Button DockPanel.Dock="Right" Content="Set" Click="SetDurationClicked" Margin="8,0,0,0" />
-                <TextBlock Text="Duration (ms)" VerticalAlignment="Center" Style="{StaticResource SecondaryText}" />
-                <TextBox x:Name="DurationInput" Text="220" MaxLength="5" Width="76" HorizontalAlignment="Right" />
-              </DockPanel>
             </Expander>
           </StackPanel>
         </ScrollViewer>
