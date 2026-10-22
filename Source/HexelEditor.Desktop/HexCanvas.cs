@@ -26,7 +26,7 @@ public sealed class HexCanvas : SKElement
     private float offsetY;
     public float Zoom { get; private set; } = 1;
     public DrawingTool Tool { get; set; }
-    public uint ForegroundColor { get; set; } = 0xFF5CE4C2;
+    public uint ForegroundColor { get; set; } = 0xFF000000;
     public int BrushRadius { get; set; }
     public bool ShowGrid { get; set; } = true;
     public bool ShowOnionSkin { get; set; }
@@ -80,19 +80,21 @@ public sealed class HexCanvas : SKElement
     private void Paint(object? sender, SKPaintSurfaceEventArgs args)
     {
         var canvas = args.Surface.Canvas;
-        canvas.Clear(new SKColor(16, 19, 25));
+        canvas.Clear(new SKColor(243, 243, 243));
         if (session == null || ActualWidth <= 0) return;
         canvas.Scale((float)(args.Info.Width / ActualWidth), (float)(args.Info.Height / ActualHeight));
-        using (var dot = new SKPaint { Color = new SKColor(39, 46, 57), IsAntialias = true })
+        using (var dot = new SKPaint { Color = new SKColor(222, 222, 222), IsAntialias = true })
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
         ArtworkRenderer.Draw(canvas, session.Document, session.ActiveFrame, true, ShowGrid, Zoom, ShowOnionSkin && !IsPlaying);
         using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
-        using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(92, 228, 194) };
-        using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(92, 228, 194, 36) };
+        using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
+        using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(0, 95, 184, 40) };
+        // The cursor ring carries a light halo so that it stays visible over both pale and dark artwork.
+        using var halo = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 3.4f / Zoom, Color = new SKColor(255, 255, 255, 205) };
         var visible = canvas.LocalClipBounds;
-        void Highlight(HexCoordinate coordinate, bool filled)
+        void Highlight(HexCoordinate coordinate, bool filled, bool cursor = false)
         {
             if (session.Document.IndexOf(coordinate) < 0) return;
             var (x, y) = HexGeometry.Center(coordinate, session.Document.Orientation, ArtworkRenderer.CellRadius);
@@ -100,6 +102,7 @@ public sealed class HexCanvas : SKElement
             if (!ArtworkRenderer.IsVisible(visible, x, y)) return;
             canvas.Save(); canvas.Translate((float)x, (float)y);
             if (filled) canvas.DrawPath(path, fill);
+            if (cursor) canvas.DrawPath(path, halo);
             canvas.DrawPath(path, outline); canvas.Restore();
         }
         foreach (var index in session.Selection) Highlight(session.Document.CoordinateAt(index), true);
@@ -117,8 +120,8 @@ public sealed class HexCanvas : SKElement
         }
         if (!IsPlaying && hover.HasValue && !panning)
         {
-            outline.Color = session.CanPaint ? new SKColor(238, 246, 244) : new SKColor(239, 117, 117);
-            foreach (var cell in hover.Value.Disk(Tool is DrawingTool.Pencil or DrawingTool.Eraser ? BrushRadius : 0)) Highlight(cell, false);
+            outline.Color = session.CanPaint ? new SKColor(31, 31, 31) : new SKColor(196, 43, 28);
+            foreach (var cell in hover.Value.Disk(Tool is DrawingTool.Pencil or DrawingTool.Eraser ? BrushRadius : 0)) Highlight(cell, false, true);
         }
     }
 

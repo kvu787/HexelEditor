@@ -10,6 +10,8 @@ namespace HexelEditor.Desktop;
 public static class ArtworkRenderer
 {
     public const float CellRadius = 12;
+    public const int ThumbnailWidth = 120;
+    public const int ThumbnailHeight = 74;
 
     public static SKRect Bounds(HexDocument document, float radius = CellRadius)
     {
@@ -39,7 +41,7 @@ public static class ArtworkRenderer
     {
         using var path = Hexagon(document.Orientation);
         using var fill = new SKPaint { IsAntialias = true };
-        using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, Color = new SKColor(13, 19, 27, 110), StrokeWidth = 0.65f / zoom };
+        using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, Color = new SKColor(0, 0, 0, 58), StrokeWidth = 0.65f / zoom };
         var visible = canvas.LocalClipBounds;
         for (var index = 0; index < document.CellCount; index++)
         {
@@ -48,7 +50,8 @@ public static class ArtworkRenderer
             canvas.Save(); canvas.Translate((float)x, (float)y);
             if (paper)
             {
-                fill.Color = (index % document.Width + index / document.Width) % 2 == 0 ? new SKColor(44, 51, 62) : new SKColor(50, 57, 68);
+                // Checkered paper marks the cells that hold no color, as a transparency checkerboard does.
+                fill.Color = (index % document.Width + index / document.Width) % 2 == 0 ? new SKColor(255, 255, 255) : new SKColor(233, 233, 233);
                 canvas.DrawPath(path, fill);
             }
             if (onion && frameIndex > 0)
@@ -70,11 +73,11 @@ public static class ArtworkRenderer
 
     public static BitmapSource Thumbnail(HexDocument document, int frameIndex)
     {
-        using var surface = SKSurface.Create(new SKImageInfo(92, 62));
-        surface.Canvas.Clear(new SKColor(16, 19, 25));
+        using var surface = SKSurface.Create(new SKImageInfo(ThumbnailWidth, ThumbnailHeight));
+        surface.Canvas.Clear(new SKColor(255, 255, 255));
         var bounds = Bounds(document);
-        var scale = Math.Min(88 / bounds.Width, 58 / bounds.Height);
-        surface.Canvas.Translate((92 - bounds.Width * scale) / 2 - bounds.Left * scale, (62 - bounds.Height * scale) / 2 - bounds.Top * scale);
+        var scale = Math.Min((ThumbnailWidth - 8) / bounds.Width, (ThumbnailHeight - 8) / bounds.Height);
+        surface.Canvas.Translate((ThumbnailWidth - bounds.Width * scale) / 2 - bounds.Left * scale, (ThumbnailHeight - bounds.Height * scale) / 2 - bounds.Top * scale);
         surface.Canvas.Scale(scale);
         Draw(surface.Canvas, document, frameIndex);
         using var snapshot = surface.Snapshot(); using var data = snapshot.Encode(SKEncodedImageFormat.Png, 100);
