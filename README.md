@@ -24,7 +24,7 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
 - Compressed `.hexel` projects, transparent PNG and SVG export, and horizontal PNG animation sprite sheets.
 
-The current release supports up to 32 layers, 128 frames, and 16,777,216 cells across all cels. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Standard bitmap import and animated GIF export are not implemented.
+The current release supports up to 32 layers, 128 frames, 256 palette colors, and 16,777,216 cells across all cels. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Standard bitmap import and animated GIF export are not implemented.
 
 ## Shortcuts
 
@@ -80,7 +80,9 @@ Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root,
 - `Source/HexelEditor.Desktop`: styled WPF interface, pointer and keyboard handling, Skia canvas, animation playback, and image exporters. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control.
 - `Tests/HexelEditor.Tests`: xUnit tests for the editing core.
 - `Build.cmd` / `Build.ps1` and `Run.cmd` / `Run.ps1`: repository-root build and run entry points.
-- `Scripts`: shared PowerShell helpers, tests, verification, and publishing.
+- `Scripts`: shared PowerShell helpers, tests, verification, and publishing. The shared helper requires PowerShell 7 or later.
+- `Documentation`: images used by this file.
+- `Examples`: the saved example project.
 - `Conversations`: the verbatim conversation history required by `AGENTS.md`.
 
 Project files are ZIP archives containing `Document.json` and little-endian 32-bit ARGB buffers at `Cells/<frame>/<layer>.bin`. Saves replace the destination only after writing a complete temporary archive. Loads validate dimensions, frame durations, buffer lengths, and resource limits before creating cell buffers. The reader accepts the current format only; no migration or backward-compatibility layer is maintained.
