@@ -22,9 +22,9 @@ public static class EditorDialogs
     {
         var dialog = new Window { Title = "Hexel Editor - Shortcuts", Owner = owner, Width = 570, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         var panel = new StackPanel { Margin = new Thickness(28) };
-        panel.Children.Add(new TextBlock { Text = "A different kind of pixel.", FontSize = 23, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) });
+        panel.Children.Add(new TextBlock { Text = "Shortcuts", FontSize = 23, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) });
         panel.Children.Add(new TextBlock { Text = "B  Pencil     E  Eraser     G  Fill     I  Eyedropper\nL  Line        U  Rectangle        M  Selection\n\nRight-click paints transparency. Alt-click picks a color.\n[ / ] changes the hex brush radius.\nSpace + drag or middle-drag pans. Scroll zooms at the cursor.\nF fits the canvas. H toggles the grid.\n\nCtrl+N / O / S  New / Open / Save\nCtrl+Shift+S  Save as\nCtrl+Z / Y  Undo / Redo\nCtrl+A / D  Select all / Deselect\nCtrl+C / X / V  Copy / Cut / Paste at the cursor\nDelete  Clear selection, or the whole active cel\nArrows  Move selected cells (clipped at the canvas edge)\nEsc  Deselect and stop playback\nEnter  Play / Stop     , / .  Previous / Next frame\n\nArtwork is stored as hexels. PNG and SVG exports have a\ntransparent background. Sprite sheets arrange frames left to right.", LineHeight = 22, FontSize = 12 });
-        var close = new Button { Content = "Back to the canvas", IsDefault = true, IsCancel = true, Margin = new Thickness(0, 20, 0, 0) }; panel.Children.Add(close); dialog.Content = panel; dialog.ShowDialog();
+        var close = new Button { Content = "Close", IsDefault = true, IsCancel = true, Margin = new Thickness(0, 20, 0, 0) }; panel.Children.Add(close); dialog.Content = panel; dialog.ShowDialog();
     }
 }
 
@@ -43,7 +43,7 @@ public sealed class NewCanvasDialog : Window
     {
         Title = "New hexel canvas"; Width = 420; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var panel = new StackPanel { Margin = new Thickness(28) };
-        panel.Children.Add(new TextBlock { Text = "Start something hextraordinary.", FontSize = 21, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 24) });
+        panel.Children.Add(new TextBlock { Text = "New hexel canvas", FontSize = 21, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 24) });
         void Field(string label, TextBox input) { panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 7) }); panel.Children.Add(input); input.Margin = new Thickness(0, 0, 0, 16); }
         Field("Project name", nameInput); Field($"Columns (1-{HexDocument.MaximumDimension})", widthInput); Field($"Rows (1-{HexDocument.MaximumDimension})", heightInput);
         panel.Children.Add(new TextBlock { Text = "Hexagon orientation", Margin = new Thickness(0, 0, 0, 4) }); panel.Children.Add(pointy); panel.Children.Add(new RadioButton { Content = "Flat top", GroupName = "Orientation" });

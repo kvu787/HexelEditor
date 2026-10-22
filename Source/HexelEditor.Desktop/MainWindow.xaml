@@ -11,7 +11,7 @@
         <Grid.ColumnDefinitions><ColumnDefinition Width="220" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
           <Path Data="M 14,0 L 27,7 L 27,22 L 14,29 L 1,22 L 1,7 Z M 14,7 L 20,11 L 20,18 L 14,22 L 8,18 L 8,11 Z" Fill="{StaticResource Accent}" Stretch="Uniform" Width="28" Height="30" />
-          <StackPanel Margin="12,0,0,0"><TextBlock Text="HEXEL" FontWeight="Bold" FontSize="18" /><TextBlock Text="ART STUDIO" FontSize="9" Foreground="{StaticResource Muted}" /></StackPanel>
+          <TextBlock Text="HEXEL" FontWeight="Bold" FontSize="18" Margin="12,0,0,0" VerticalAlignment="Center" />
         </StackPanel>
         <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock x:Name="DocumentTitle" Text="Neon tide" FontWeight="SemiBold" HorizontalAlignment="Center" /><TextBlock x:Name="DocumentDetails" Foreground="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Center" Margin="0,3,0,0" /></StackPanel>
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center"><Button Content="Open" Click="OpenClicked" Style="{StaticResource QuietButton}" Margin="0,0,6,0" /><Button Content="Save project" Click="SaveClicked" Margin="0,0,8,0" /><Button Content="Export PNG" Click="ExportPngClicked" Style="{StaticResource AccentButton}" /></StackPanel>
@@ -27,7 +27,6 @@
       <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /><ColumnDefinition Width="278" /></Grid.ColumnDefinitions>
       <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Outline}" BorderThickness="0,0,1,0">
         <DockPanel Margin="9,16">
-          <TextBlock DockPanel.Dock="Bottom" Text="HEX&#x0a;GRID" TextAlignment="Center" Foreground="{StaticResource Muted}" FontSize="9" Margin="0,12,0,0" />
           <StackPanel x:Name="ToolsPanel" />
         </DockPanel>
       </Border>
@@ -57,7 +56,7 @@
               <TextBlock Text="COLOR" Style="{StaticResource Caption}" />
               <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Border x:Name="CurrentColorPreview" Height="42" CornerRadius="6" BorderThickness="1" BorderBrush="{StaticResource Outline}" /><StackPanel Grid.Column="1" Margin="12,1,0,0"><TextBlock Text="Foreground" FontSize="11" Foreground="{StaticResource Muted}" /><TextBlock x:Name="CurrentColorLabel" FontFamily="Consolas" FontSize="15" Margin="0,4,0,0" /></StackPanel></Grid>
               <DockPanel><Button DockPanel.Dock="Right" Content="Set" Click="SetColorClicked" Padding="10,5" Margin="6,0,0,0" /><TextBox x:Name="ColorInput" Text="#5CE4C2" MaxLength="9" ToolTip="#RRGGBB or #AARRGGBB" KeyDown="ColorInputKeyDown" /></DockPanel>
-              <DockPanel Margin="0,20,0,8"><Button DockPanel.Dock="Right" Content="+ Add" Click="AddColorClicked" Style="{StaticResource QuietButton}" Padding="5,0" FontSize="10" /><TextBlock Text="STUDIO PALETTE" FontSize="10" Foreground="{StaticResource Muted}" FontWeight="SemiBold" /></DockPanel>
+              <DockPanel Margin="0,20,0,8"><Button DockPanel.Dock="Right" Content="+ Add" Click="AddColorClicked" Style="{StaticResource QuietButton}" Padding="5,0" FontSize="10" /><TextBlock Text="PALETTE" FontSize="10" Foreground="{StaticResource Muted}" FontWeight="SemiBold" /></DockPanel>
               <WrapPanel x:Name="PalettePanel" />
             </StackPanel>
             <Border Height="1" Background="{StaticResource Outline}" />
@@ -71,12 +70,12 @@
             <Border Height="1" Background="{StaticResource Outline}" />
             <StackPanel Margin="18,17,18,18">
               <TextBlock Text="FRAME" Style="{StaticResource Caption}" /><DockPanel><TextBlock Text="Duration (ms)" Foreground="{StaticResource Muted}" VerticalAlignment="Center" /><Button DockPanel.Dock="Right" Content="Set" Click="SetDurationClicked" Padding="9,5" Margin="6,0,0,0" /><TextBox x:Name="DurationInput" Width="66" Text="220" MaxLength="5" HorizontalAlignment="Right" /></DockPanel>
-              <Border Background="#232F32" BorderBrush="#34524C" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,20,0,0"><StackPanel><TextBlock Text="MAKE EVERY HEX COUNT." FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource Accent}" /><TextBlock Text="B pencil  /  E eraser  /  G fill&#x0a;Space + drag to pan&#x0a;Scroll to zoom at the cursor" Foreground="#A5BAB8" FontSize="11" LineHeight="19" Margin="0,7,0,0" /></StackPanel></Border>
+              <Border Background="#232F32" BorderBrush="#34524C" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,20,0,0"><TextBlock Text="B pencil  /  E eraser  /  G fill&#x0a;Space + drag to pan&#x0a;Scroll to zoom at the cursor" Foreground="#A5BAB8" FontSize="11" LineHeight="19" /></Border>
             </StackPanel>
           </StackPanel>
         </ScrollViewer>
       </Border>
     </Grid>
-    <Border Grid.Row="3" Background="#161B23" BorderBrush="{StaticResource Outline}" BorderThickness="0,1,0,0"><DockPanel Margin="16,0"><TextBlock x:Name="SelectionStatus" DockPanel.Dock="Right" Text="Ready" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /><TextBlock x:Name="StatusLabel" Text="Welcome to Hexel. Your canvas is a little different here." VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /></DockPanel></Border>
+    <Border Grid.Row="3" Background="#161B23" BorderBrush="{StaticResource Outline}" BorderThickness="0,1,0,0"><DockPanel Margin="16,0"><TextBlock x:Name="SelectionStatus" DockPanel.Dock="Right" Text="Ready" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /><TextBlock x:Name="StatusLabel" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource Muted}" /></DockPanel></Border>
   </Grid>
 </Window>

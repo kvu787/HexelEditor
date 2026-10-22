@@ -231,7 +231,7 @@ public partial class MainWindow : Window
         var dialog = new NewCanvasDialog { Owner = this };
         if (dialog.ShowDialog() != true) return;
         projectPath = null; AttachSession(new EditorSession(new HexDocument(dialog.CanvasWidth, dialog.CanvasHeight, dialog.Orientation) { Name = dialog.CanvasName }));
-        StatusLabel.Text = "New canvas. Choose a color and make your first mark.";
+        StatusLabel.Text = "New canvas";
     }
 
     private void OpenExample() { if (CanReplaceDocument()) { projectPath = null; AttachSession(new EditorSession(ExampleDocument.Create())); } }
