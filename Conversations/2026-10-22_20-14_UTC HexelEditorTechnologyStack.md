@@ -108,3 +108,26 @@ I plan to use **C# + .NET 10 + WPF + SkiaSharp**, targeting **Windows 11 x64**.
 The central design choice is to **store artwork as colored hexagonal cells**. Brushes, adjacency, selections, and 60-degree rotations would all operate directly on that grid.
 
 I'd build painting, erasing, palettes, pan/zoom, undo/redo, save/load, and PNG export first, then add layers and animation.
+
+## User
+
+ignore any existing tools installed on this machine.
+if you could use any tech stack you wanted, what would you use?
+
+## Assistant
+
+I'll choose based on the editor's needs and your Windows 11 x64 requirement, without considering installed tools.
+
+## Assistant
+
+With that constraint removed, my preference is **C++20 + Qt 6 Widgets + a custom GPU canvas**, still targeting Windows 11 x64.
+
+- **C++20:** The document model, hex-grid algorithms, brushes, layers, animation, and undo/redo. It gives direct control over memory layout and allocation in the editing loop.
+- **Qt 6 Widgets:** The desktop interface: menus, shortcuts, dialogs, dockable palettes, layer panels, and timeline. Its existing docking controls fit an editor well. [Qt docking documentation](https://doc.qt.io/qt-6.12/qdockwidget.html).
+- **Direct3D 11 through Qt's QRhiWidget:** A batched renderer for hexagons, compositing, selections, and grid overlays. Qt provides the integration between that GPU canvas and the surrounding widgets. [Rendering documentation](https://doc.qt.io/qt-6/qrhiwidget.html).
+- **CMake + Ninja + MSVC:** Builds, with pinned dependency versions.
+- **Catch2 + CTest:** Tests for geometry, editing operations, undo, and file persistence.
+
+I'd keep the editing core independent of Qt and render visible hexagons in batches. That gives us room to optimize large canvases without changing how documents and tools work.
+
+**My reason for choosing this stack is control over the drawing experience alongside a mature desktop UI toolkit.** The cost is more C++ and renderer maintenance, which I'd accept for a substantial art editor.
