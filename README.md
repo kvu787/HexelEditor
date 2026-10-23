@@ -62,7 +62,7 @@ pwsh -File ./Scripts/Publish.ps1
 
 - Build compiles the complete solution in Release mode with warnings treated as errors.
 - Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that no background shows between neighboring opaque cells, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
@@ -74,7 +74,7 @@ Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root,
 ## Source layout
 
 - `Source/HexelEditor.Core`: document model, axial/offset geometry, six-neighbor algorithms, editing history, example artwork, and project serialization. It has no WPF or Skia dependency.
-- `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, Skia canvas, and image exporters. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control.
+- `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, Skia canvas, and image exporters. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control. Cells that share a color are filled as one path, and every cell reaches a fraction of a pixel past its edges, so neighbors overlap rather than meet and no background shows between them when the grid is off.
 - `Tests/HexelEditor.Tests`: xUnit tests for the editing core.
 - `Build.cmd` / `Build.ps1` and `Run.cmd` / `Run.ps1`: repository-root build and run entry points.
 - `Scripts`: shared PowerShell helpers, tests, verification, and publishing. The shared helper requires PowerShell 7 or later.
