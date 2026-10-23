@@ -1,0 +1,7 @@
+# Stop Git from attempting any end-of-line conversion upon checkin or checkout.
+# https://git-scm.com/docs/gitattributes
+* -text
+
+*.csv filter=lfs diff=lfs merge=lfs -text
+*.blend filter=lfs diff=lfs merge=lfs -text
+*.glb filter=lfs diff=lfs merge=lfs -text
