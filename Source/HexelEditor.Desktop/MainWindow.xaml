@@ -92,7 +92,8 @@
           <TextBlock x:Name="BrushSizeLabel" Text="1" Width="34" TextAlignment="Center" VerticalAlignment="Center" />
           <Button Content="+" Click="LargerBrushClicked" Style="{StaticResource ToolbarButton}" Padding="10,4"
                   ToolTip="Larger brush (])" />
-          <CheckBox x:Name="FilledShapes" Content="Filled shapes" Margin="18,0,0,0" />
+          <CheckBox x:Name="FilledShapes" Content="Filled shapes" Margin="18,0,0,0"
+                    ToolTip="Fill rectangles instead of drawing only their outline" />
         </StackPanel>
       </DockPanel>
     </Border>
