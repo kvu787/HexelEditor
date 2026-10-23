@@ -28,3 +28,23 @@ No compatibility shim for old `.hexel` files, per `AGENTS.md`.
 **Documentation** (`7ce4bad`) - README no longer describes frames, playback, onion skinning, or sprite sheets; the shortcut table drops Enter and `,` / `.`; three test names that called a layer's buffer a "cel" now say "cells".
 
 Tests went from 53 to 51: the frame-duration range test is gone, the last-layer and last-frame deletion test is now about layers alone, and two frame/layer tests were rewritten around layers. `Scripts/Verify.ps1` passed at each step: build with no warnings, 51 unit tests, and the desktop verification run (save/load, PNG export, SVG, menu and dialog layout, session logging). Not opened on a physical display.
+
+## User
+
+Yes, run the editor on NE18NZ2 so I can look at it.
+
+## Assistant
+
+`WmiMonitorID` identifies NE18NZ2 as the BOE panel; matching its instance key against `EnumDisplayDevices` resolves it to `\\.\DISPLAY1`, 3840 x 2400 at X=5120, Y=-958, and not the primary display. So `Run.cmd` alone would most likely have opened the editor on the primary monitor. Launched it through `Run.ps1`, then moved the window onto that screen and maximized it: process 11992, responding, titled "Neon tide - Hexel Editor", with a clean session log and no errors.
+
+## User
+
+this is not the workflow i intended. when i ask you to make a change, you should open the application on NE18NZ2 and do any validation you deem necessary on your own.
+
+you shouldn't ask me if i want the application opened, then open the app, then ask me if it looks good. I'm already going to do that after you complete your change. you doing asking me explicitly is a waste of your tokens and our time.
+
+## Assistant
+
+Recorded. Added the rule to `AGENTS.md` under "Using physical displays" so it governs future sessions, and saved it to my own memory for this repository.
+
+From now on, finishing a change includes opening the app on NE18NZ2 and validating it myself, then reporting what I verified and what I could not. No asking to launch it, no asking whether it looks right.
