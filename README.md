@@ -64,10 +64,23 @@ pwsh -File ./Scripts/Publish.ps1
 
 - Build compiles the complete solution in Release mode with warnings treated as errors.
 - Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, lays out the palette grid and chooses and adds a color through its real controls, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
+
+### Checking the editor on a physical display
+
+Verify covers behavior without a display. To see the real interface at real pixel density while someone is using the machine, the editor can be put on a display it will not take the keyboard away from:
+
+```powershell
+pwsh -File ./Run.ps1 -Display NE18NZ2
+pwsh -File ./Scripts/CaptureWindow.ps1 -OutputPath ./LogOutput/Editor.png
+```
+
+`-Display` fills the named monitor and starts the window without activating it: it is placed before its first frame, so it never appears on another display first, it carries `WS_EX_NOACTIVATE`, and the editor skips the focus calls it normally makes while loading. `CaptureWindow.ps1` photographs it with `PrintWindow`, which asks the window to draw itself and so needs neither the foreground nor an unobstructed view, and it fails if the foreground moved while it worked. Without `-Display` the editor opens normally, in front.
+
+This pass is look-only. Reading the automation tree is safe, but `InvokePattern.Invoke` activates the window whatever the control does, so clicking belongs in the hidden host, where Verify raises the events on the real controls instead.
 
 ## Session logs
 
