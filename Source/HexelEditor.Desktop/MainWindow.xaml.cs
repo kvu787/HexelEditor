@@ -426,11 +426,21 @@ public partial class MainWindow : Window
         using var image = SkiaSharp.SKBitmap.Decode(System.IO.Path.Combine(folder, "Artwork.png"));
         if (image == null || image.Width < 100 || image.Height < 100) throw new InvalidDataException("PNG export verification failed.");
         var bounds = ArtworkRenderer.Bounds(roundTrip);
+        SkiaSharp.SKColor Sample(double x, double y) =>
+            image.GetPixel((int)Math.Round(x + 1 - bounds.Left * 16 / ArtworkRenderer.CellRadius), (int)Math.Round(y + 1 - bounds.Top * 16 / ArtworkRenderer.CellRadius));
         for (var index = 0; index < roundTrip.CellCount; index++)
         {
-            var (x, y) = HexGeometry.Center(roundTrip.CoordinateAt(index), roundTrip.Orientation, 16);
-            var pixel = image.GetPixel((int)Math.Round(x + 1 - bounds.Left * 16 / ArtworkRenderer.CellRadius), (int)Math.Round(y + 1 - bounds.Top * 16 / ArtworkRenderer.CellRadius));
-            if ((uint)pixel != roundTrip.CompositeAt(index)) throw new InvalidDataException($"PNG color mismatch at cell {index}.");
+            var coordinate = roundTrip.CoordinateAt(index);
+            var (x, y) = HexGeometry.Center(coordinate, roundTrip.Orientation, 16);
+            if ((uint)Sample(x, y) != roundTrip.CompositeAt(index)) throw new InvalidDataException($"PNG color mismatch at cell {index}.");
+            // Opaque neighbors must also meet with no background between them, which is what a seam would be.
+            foreach (var direction in HexCoordinate.Directions)
+            {
+                var neighbor = roundTrip.IndexOf(coordinate + direction);
+                if (neighbor < 0 || (roundTrip.CompositeAt(neighbor) >> 24) != 255) continue;
+                var (neighborX, neighborY) = HexGeometry.Center(coordinate + direction, roundTrip.Orientation, 16);
+                if (Sample((x + neighborX) / 2, (y + neighborY) / 2).Alpha != 255) throw new InvalidDataException($"PNG seam between cells {index} and {neighbor}.");
+            }
         }
         var svg = System.Xml.Linq.XDocument.Load(System.IO.Path.Combine(folder, "Artwork.svg"));
         if (svg.Root?.Elements().Count() != roundTrip.CellCount) throw new InvalidDataException("SVG geometry is incomplete.");
