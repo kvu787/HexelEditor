@@ -72,6 +72,8 @@ public partial class App : Application
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
             window.VerifyInterface(folder);
+            // Last, because it clicks real swatches and adds a color, which no later step should inherit.
+            window.VerifyPalette(folder);
             Log.Write("Desktop verification passed.");
             Shutdown();
             return;

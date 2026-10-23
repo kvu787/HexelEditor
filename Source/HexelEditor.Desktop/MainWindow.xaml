@@ -188,7 +188,8 @@
             <Expander Header="Palette" Style="{StaticResource Section}">
               <StackPanel>
                 <UniformGrid x:Name="PalettePanel" Margin="0,4,0,0" SizeChanged="PaletteResized" />
-                <Button Content="Add current color" Click="AddColorClicked" HorizontalAlignment="Left" Margin="0,8,0,0" />
+                <Button x:Name="AddColorButton" Content="Add current color" Click="AddColorClicked"
+                        HorizontalAlignment="Left" Margin="0,8,0,0" />
               </StackPanel>
             </Expander>
 

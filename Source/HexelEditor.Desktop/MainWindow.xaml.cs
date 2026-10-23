@@ -531,6 +531,51 @@ public partial class MainWindow : Window
     }
 
     // Opening a menu leaves it highlighted, so this runs after the editor screenshot rather than inside VerifyEditor.
+    // The palette is the one panel laid out from the document at runtime, so the grid it builds, the color a
+    // swatch sets, and the row an added color lands in are checked here rather than on a physical display.
+    public void VerifyPalette(string folder)
+    {
+        UpdateLayout();
+        if (PalettePanel.Columns != HexDocument.PaletteColumns)
+            throw new InvalidOperationException("The palette is not laid out on its grid.");
+        if (PalettePanel.Children.Count != session.Document.Palette.Count)
+            throw new InvalidOperationException("The palette grid does not hold every color.");
+        var side = Math.Floor(PalettePanel.ActualWidth / HexDocument.PaletteColumns);
+        if (side < 1) throw new InvalidOperationException("The palette grid was given no width to lay swatches out in.");
+        foreach (FrameworkElement swatch in PalettePanel.Children)
+            if (swatch.Height != side) throw new InvalidOperationException("The palette swatches are not square.");
+
+        // Choosing a color sets the foreground and moves the selection ring onto that swatch.
+        var chosenIndex = HexDocument.PaletteColumns * 3 + 10;
+        var chosen = session.Document.Palette[chosenIndex];
+        ((Button)PalettePanel.Children[chosenIndex]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (EditorCanvas.ForegroundColor != chosen)
+            throw new InvalidOperationException("A palette swatch did not set the foreground color.");
+        if ((string?)((Button)PalettePanel.Children[chosenIndex]).Tag != "Active")
+            throw new InvalidOperationException("The chosen palette swatch is not marked as active.");
+
+        // Adding a color has to keep working now that the default palette fills the grid exactly.
+        const uint added = 0xFF7F00FF;
+        if (session.Document.Palette.Contains(added))
+            throw new InvalidOperationException("The palette already holds the color this check adds.");
+        var swatches = PalettePanel.Children.Count;
+        SetColor(added);
+        AddColorButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (session.Document.Palette.Count != swatches + 1 || session.Document.Palette[^1] != added)
+            throw new InvalidOperationException("Add current color did not append the color to the palette.");
+        UpdateLayout();
+        if (PalettePanel.Children.Count != swatches + 1)
+            throw new InvalidOperationException("The added color did not reach the palette grid.");
+
+        // Take it back out. Adding a color is an edit like any other, and leaving the session unsaved would
+        // stop the window closing, which is how this verification host exits.
+        session.Undo();
+        if (PalettePanel.Children.Count != swatches || session.IsDirty)
+            throw new InvalidOperationException("Undo did not take the added color back out of the palette.");
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
+            $"Palette grid: {swatches} swatches in {HexDocument.PaletteColumns} columns at {side} pixels square, choosing and adding a color verified\n");
+    }
+
     public void VerifyInterface(string folder)
     {
         VerifyMenu();
