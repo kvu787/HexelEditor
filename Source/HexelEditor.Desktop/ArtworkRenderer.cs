@@ -9,6 +9,7 @@ namespace HexelEditor.Desktop;
 public static class ArtworkRenderer
 {
     public const float CellRadius = 12;
+    private const float ExportScale = 16f / CellRadius;
 
     public static SKRect Bounds(HexDocument document, float radius = CellRadius)
     {
@@ -34,44 +35,86 @@ public static class ArtworkRenderer
         path.Close(); return path.Detach();
     }
 
+    // Two antialiased fills that merely touch each cover a part of the pixels along their shared edge, and
+    // neither part ever reaches the whole, so whatever lies behind them shows through as a hairline. A canvas
+    // of those hairlines reads as a grid even when no grid is drawn. Cells therefore overlap by enough that
+    // one side or the other covers every edge pixel whole: three quarters of a pixel past each edge covers
+    // any pixel a hexagon's edge angles can straddle, and still reads as the same shape in the same place.
+    private const float SeamOverlap = 0.75f;
+
+    // An edge sits closer to the center than a corner does, so growing the radius moves it by cos(30 degrees)
+    // of that growth. Far enough out, a whole cell is thinner than a pixel, and the overlap stops growing.
+    private static float Bleed(float scale) =>
+        Math.Min(scale > 0.01f ? SeamOverlap * 2 / (float)Math.Sqrt(3) / scale : CellRadius, CellRadius / 8);
+
+    private static float CanvasScale(SKCanvas canvas)
+    {
+        var matrix = canvas.TotalMatrix;
+        return (float)Math.Sqrt(Math.Abs(matrix.ScaleX * matrix.ScaleY - matrix.SkewX * matrix.SkewY));
+    }
+
     public static void Draw(SKCanvas canvas, HexDocument document, bool paper = false, bool grid = false, float zoom = 1)
     {
-        using var path = Hexagon(document.Orientation);
-        using var fill = new SKPaint { IsAntialias = true };
-        using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, Color = new SKColor(0, 0, 0, 58), StrokeWidth = 0.65f / zoom };
         var visible = canvas.LocalClipBounds;
+        using var cell = Hexagon(document.Orientation, CellRadius + Bleed(CanvasScale(canvas)));
+        // Cells of one color also share a path, so that the fill covers them as the single shape they look like.
+        using var lightPaper = new SKPathBuilder { FillType = SKPathFillType.Winding };
+        using var darkPaper = new SKPathBuilder { FillType = SKPathFillType.Winding };
+        var colors = new List<uint>();
+        var groups = new Dictionary<uint, SKPathBuilder>();
+        var seeThrough = false;
+        for (var index = 0; index < document.CellCount; index++)
+        {
+            var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
+            if (!IsVisible(visible, x, y)) continue;
+            // Checkered paper marks the cells that hold no color, as a transparency checkerboard does.
+            if (paper) ((index % document.Width + index / document.Width) % 2 == 0 ? lightPaper : darkPaper).AddPath(cell, (float)x, (float)y);
+            var color = document.CompositeAt(index);
+            if ((color >> 24) == 0) continue;
+            if (!groups.TryGetValue(color, out var group))
+            {
+                groups.Add(color, group = new SKPathBuilder { FillType = SKPathFillType.Winding });
+                colors.Add(color);
+                seeThrough |= (color >> 24) < 255;
+            }
+            group.AddPath(cell, (float)x, (float)y);
+        }
+        using var fill = new SKPaint { IsAntialias = true };
+        void FillCells(SKPathBuilder group, uint color)
+        {
+            using var filled = group.Detach();
+            fill.Color = new SKColor(color);
+            canvas.DrawPath(filled, fill);
+        }
+        // All of the paper goes down first, so that no cell's overlap paints over the artwork of its neighbor.
+        if (paper) { FillCells(lightPaper, 0xFFFFFFFF); FillCells(darkPaper, 0xFFE9E9E9); }
+        // Cells one can see through would blend twice where they overlap and draw their own seam, a darker one.
+        // Collecting them in a layer, where each cell replaces what it covers, leaves one cell's color per pixel.
+        if (seeThrough) { canvas.SaveLayer(); fill.BlendMode = SKBlendMode.Src; }
+        foreach (var color in colors) { using var group = groups[color]; FillCells(group, color); }
+        if (seeThrough) canvas.Restore();
+        if (!grid || zoom < 0.3) return;
+        using var path = Hexagon(document.Orientation);
+        using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, Color = new SKColor(0, 0, 0, 58), StrokeWidth = 0.65f / zoom };
         for (var index = 0; index < document.CellCount; index++)
         {
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
             if (!IsVisible(visible, x, y)) continue;
             canvas.Save(); canvas.Translate((float)x, (float)y);
-            if (paper)
-            {
-                // Checkered paper marks the cells that hold no color, as a transparency checkerboard does.
-                fill.Color = (index % document.Width + index / document.Width) % 2 == 0 ? new SKColor(255, 255, 255) : new SKColor(233, 233, 233);
-                canvas.DrawPath(path, fill);
-            }
-            var color = document.CompositeAt(index);
-            if ((color >> 24) > 0)
-            {
-                fill.Color = new SKColor(color);
-                canvas.DrawPath(path, fill);
-            }
-            if (grid && zoom >= 0.3) canvas.DrawPath(path, outline);
+            canvas.DrawPath(path, outline);
             canvas.Restore();
         }
     }
 
     public static void ExportPng(HexDocument document, string path)
     {
-        const float exportScale = 16f / CellRadius;
         var bounds = Bounds(document);
-        var width = (int)Math.Ceiling(bounds.Width * exportScale) + 2;
-        var height = (int)Math.Ceiling(bounds.Height * exportScale) + 2;
+        var width = (int)Math.Ceiling(bounds.Width * ExportScale) + 2;
+        var height = (int)Math.Ceiling(bounds.Height * ExportScale) + 2;
         if (width > 32768 || height > 32768 || (long)width * height > 64_000_000) throw new InvalidOperationException("This export is too large. Use a smaller canvas.");
         using var surface = SKSurface.Create(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul)) ?? throw new InvalidOperationException("Could not create the export image.");
         surface.Canvas.Clear(SKColors.Transparent);
-        surface.Canvas.Translate(1 - bounds.Left * exportScale, 1 - bounds.Top * exportScale); surface.Canvas.Scale(exportScale);
+        surface.Canvas.Translate(1 - bounds.Left * ExportScale, 1 - bounds.Top * ExportScale); surface.Canvas.Scale(ExportScale);
         Draw(surface.Canvas, document);
         using var image = surface.Snapshot(); using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var output = File.Create(path); data.SaveTo(output);
@@ -82,16 +125,21 @@ public static class ArtworkRenderer
         var bounds = Bounds(document);
         static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
         var builder = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{Number(bounds.Left - 1)} {Number(bounds.Top - 1)} {Number(bounds.Width + 2)} {Number(bounds.Height + 2)}\">\n");
+        // Opaque polygons carry the same overlap as the other outputs, sized for the scale the PNG export uses.
+        // Nothing here can hold a layer the way a canvas can, so cells one can see through stay exact instead:
+        // overlapping those would blend twice and draw a seam of its own, which no viewer's scale would hide.
+        var overlapped = CellRadius + Bleed(ExportScale);
         for (var index = 0; index < document.CellCount; index++)
         {
             var color = document.CompositeAt(index);
             if ((color >> 24) == 0) continue;
+            var radius = (color >> 24) == 255 ? overlapped : CellRadius;
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
             builder.Append("<polygon points=\"");
             for (var corner = 0; corner < 6; corner++)
             {
                 var angle = Math.PI / 180 * (60 * corner + (document.Orientation == HexOrientation.PointyTop ? -30 : 0));
-                builder.Append(Number(x + Math.Cos(angle) * CellRadius)).Append(',').Append(Number(y + Math.Sin(angle) * CellRadius)).Append(' ');
+                builder.Append(Number(x + Math.Cos(angle) * radius)).Append(',').Append(Number(y + Math.Sin(angle) * radius)).Append(' ');
             }
             builder.Append($"\" fill=\"#{color & 0xFFFFFF:X6}\" fill-opacity=\"{Number((color >> 24) / 255.0)}\"/>\n");
         }
