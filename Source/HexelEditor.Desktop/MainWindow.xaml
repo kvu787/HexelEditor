@@ -59,6 +59,8 @@
             <MenuItem Header="Zoom out" InputGestureText="-" Click="ZoomOutClicked" />
             <Separator />
             <MenuItem x:Name="GridMenuItem" Header="Hide grid" InputGestureText="H" Click="ToggleGridClicked" />
+            <Separator />
+            <MenuItem Header="Canvas background color..." Click="BackgroundColorClicked" />
           </MenuItem>
           <MenuItem Header="_Help">
             <MenuItem Header="Shortcuts" Click="HelpClicked" />
@@ -159,6 +161,26 @@
                   <Button DockPanel.Dock="Right" Content="Set" Click="SetColorClicked" Margin="8,0,0,0" />
                   <TextBox x:Name="ColorInput" Text="#000000" MaxLength="9" KeyDown="ColorInputKeyDown"
                            ToolTip="#RRGGBB or #AARRGGBB" />
+                </DockPanel>
+                <Border Height="1" Background="{StaticResource Divider}" Margin="0,16,0,0" />
+                <Grid Margin="0,16,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Border x:Name="BackgroundColorPreview" Height="46" CornerRadius="4" BorderThickness="1"
+                          BorderBrush="{StaticResource Outline}" />
+                  <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="Canvas background" Style="{StaticResource SecondaryText}" />
+                    <TextBlock x:Name="BackgroundColorLabel" FontFamily="Consolas" FontSize="16" Margin="0,3,0,0" />
+                  </StackPanel>
+                </Grid>
+                <DockPanel>
+                  <Button DockPanel.Dock="Right" Content="Set" Click="SetBackgroundColorClicked" Margin="8,0,0,0"
+                          ToolTip="Fill the canvas background with this color" />
+                  <TextBox x:Name="BackgroundColorInput" Text="#FFFFFF" MaxLength="9"
+                           KeyDown="BackgroundColorInputKeyDown"
+                           ToolTip="The solid color under every cell, saved with the project. #RRGGBB, always opaque." />
                 </DockPanel>
               </StackPanel>
             </Expander>

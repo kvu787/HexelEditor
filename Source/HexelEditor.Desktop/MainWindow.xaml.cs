@@ -154,12 +154,20 @@ public partial class MainWindow : Window
         refreshing = true;
         try
         {
-            RefreshPalette(); RefreshLayers();
+            RefreshPalette(); RefreshLayers(); RefreshBackgroundColor();
             LayerOpacity.Value = session.Document.Layers[session.ActiveLayer].Opacity;
             OpacityLabel.Text = $"{LayerOpacity.Value / 255 * 100:0}%";
             DeleteLayerButton.IsEnabled = session.Document.Layers.Count > 1;
         }
         finally { refreshing = false; }
+    }
+
+    private void RefreshBackgroundColor()
+    {
+        var color = session.Document.BackgroundColor;
+        BackgroundColorPreview.Background = BrushFor(color);
+        BackgroundColorLabel.Text = ColorMath.Format(color);
+        BackgroundColorInput.Text = ColorMath.Format(color);
     }
 
     private void RefreshPalette()
@@ -395,6 +403,26 @@ public partial class MainWindow : Window
     private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
     private void ColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetColorClicked(sender, args); args.Handled = true; } }
 
+    // The background is opaque by definition, so an alpha the value carries is dropped rather than refused.
+    private void SetBackgroundColor(string text)
+    {
+        uint color;
+        try { color = ColorMath.Parse(text) | 0xFF000000; }
+        catch (FormatException exception) { ShowError(exception.Message, exception); return; }
+        Act(() => session.SetBackgroundColor(color));
+        StatusLabel.Text = $"Canvas background {ColorMath.Format(color)}";
+        RefreshBackgroundColor();
+    }
+
+    private void SetBackgroundColorClicked(object sender, RoutedEventArgs args) { SetBackgroundColor(BackgroundColorInput.Text); EditorCanvas.Focus(); }
+    private void BackgroundColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetBackgroundColorClicked(sender, args); args.Handled = true; } }
+
+    private void BackgroundColorClicked(object sender, RoutedEventArgs args)
+    {
+        var text = EditorDialogs.Prompt(this, "Canvas background color", "Background color (#RRGGBB)", ColorMath.Format(session.Document.BackgroundColor));
+        if (text != null) SetBackgroundColor(text);
+    }
+
     private void AddColorClicked(object sender, RoutedEventArgs args)
     {
         var color = EditorCanvas.ForegroundColor;
@@ -448,8 +476,33 @@ public partial class MainWindow : Window
         ArtworkRenderer.ExportPng(new HexDocument(1, 1, HexOrientation.FlatTop), blankPath);
         using var blank = SkiaSharp.SKBitmap.Decode(blankPath);
         if (blank.Pixels.Any(pixel => pixel.Alpha != 0)) throw new InvalidDataException("Empty exported cells are not transparent.");
+        var backgroundCells = VerifyBackgroundLayer();
         EditorCanvas.Fit(); UpdateLayout();
-        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nPNG export: {image.Width} x {image.Height}, all {roundTrip.CellCount} cell colors verified\nSVG polygons: passed\nFlat-top transparent export: passed\n");
+        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nPNG export: {image.Width} x {image.Height}, all {roundTrip.CellCount} cell colors verified\nSVG polygons: passed\nFlat-top transparent export: passed\nCanvas background: one solid color under all {backgroundCells} cells\n");
+    }
+
+    // The background layer is one color rather than a pattern, so every cell holding no artwork samples the same value.
+    private static int VerifyBackgroundLayer()
+    {
+        const uint background = 0xFF336699;
+        var document = new HexDocument(5, 4) { BackgroundColor = background };
+        document.Layers[0].Cells[0] = 0xFFFF0000;
+        var bounds = ArtworkRenderer.Bounds(document);
+        using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo((int)Math.Ceiling(bounds.Width) + 2, (int)Math.Ceiling(bounds.Height) + 2))
+            ?? throw new InvalidOperationException("Could not create the background verification image.");
+        surface.Canvas.Clear(SkiaSharp.SKColors.Transparent);
+        surface.Canvas.Translate(1 - bounds.Left, 1 - bounds.Top);
+        ArtworkRenderer.Draw(surface.Canvas, document, background: true);
+        using var image = surface.Snapshot();
+        using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
+        for (var index = 0; index < document.CellCount; index++)
+        {
+            var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, ArtworkRenderer.CellRadius);
+            var sample = (uint)bitmap.GetPixel((int)Math.Round(x + 1 - bounds.Left), (int)Math.Round(y + 1 - bounds.Top));
+            var expected = index == 0 ? 0xFFFF0000 : background;
+            if (sample != expected) throw new InvalidDataException($"The canvas background is not solid at cell {index}: {ColorMath.Format(sample)}.");
+        }
+        return document.CellCount;
     }
 
     // Opening a menu leaves it highlighted, so this runs after the editor screenshot rather than inside VerifyEditor.
