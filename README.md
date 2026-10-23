@@ -19,12 +19,13 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 - Pencil and eraser with hexagonal brushes, connected flood fill, eyedropper, lines, and outlined or filled rectangles.
 - Rectangular selections, cell copying and pasting, movement, and exact 60-degree rotations. Transforms clip at the canvas boundary and can be undone.
 - Layers with names, visibility, locking, opacity, and ordering, each holding its own cells.
-- Editable color values (`#RRGGBB` or `#AARRGGBB`) and a project palette.
+- Editable color values (`#RRGGBB` or `#AARRGGBB`) and a project palette. The palette opens as a 16 by 16 grid of 256 colors:
+  a grey ramp from black to white, then one row per hue shaded dark to light. Colors you add appear below the grid.
 - A solid canvas background under every cell, white on a new canvas and changeable at any time from the Color side bar section or View > Canvas background color. It is saved with the project and can be undone like any other edit.
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
 - Compressed `.hexel` projects and transparent PNG and SVG export.
 
-The current release supports up to 32 layers, a 256 by 256 canvas, and 256 palette colors. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
+The current release supports up to 32 layers, a 256 by 256 canvas, and 512 palette colors, 256 of which a new project starts with. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
 
 ## Shortcuts
 
