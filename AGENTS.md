@@ -87,6 +87,9 @@ Support Windows 11 x64 as the only target platform.
 
 ## Using physical displays
 
-If you need a display, only use NE18NZ2.
+If you are creating GUI apps or games, it may be helpful for you to launch the app on a display for validation or other tasks.
+Assume that the user is actively using the machine. This means whatever you do, you want to minimize or ideally avoid any disruptions to the user's usage.
+Assume that the only display that is never used by the user is NE18NZ2, which means you can use it freely.
+If possible, never steal focus away from the user onto stuff that you launch.
 
 After changing a runnable application, open it on NE18NZ2 and validate the change yourself as part of finishing the work. Don't ask for permission to open it, and don't ask whether the result looks right. Report what you verified and what you could not.
