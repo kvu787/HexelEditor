@@ -126,7 +126,8 @@ public sealed class HexCanvas : SKElement
     private void PointerDown(object sender, MouseButtonEventArgs args)
     {
         if (session == null) return;
-        Focus(); var point = args.GetPosition(this);
+        if (!App.KeepFocusAway) Focus();
+        var point = args.GetPosition(this);
         if (args.ChangedButton == MouseButton.Middle || (SpacePressed && args.ChangedButton == MouseButton.Left))
         {
             panning = true; panPoint = point; Cursor = Cursors.ScrollAll; CaptureMouse(); args.Handled = true; return;

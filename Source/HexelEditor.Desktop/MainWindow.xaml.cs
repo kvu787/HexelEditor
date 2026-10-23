@@ -48,7 +48,7 @@ public partial class MainWindow : Window
         AttachSession(session);
         SetColor(0xFF000000);
         SetTool(DrawingTool.Pencil);
-        Loaded += (_, _) => { EditorCanvas.Fit(); EditorCanvas.Focus(); };
+        Loaded += (_, _) => { EditorCanvas.Fit(); FocusCanvas(); };
         Deactivated += (_, _) => { EditorCanvas.SpacePressed = false; EditorCanvas.FinishGesture(); };
     }
 
@@ -111,7 +111,7 @@ public partial class MainWindow : Window
             toolIcons[key].Stroke = key == tool ? strongInk : muted;
         }
         ToolLabel.Text = tool == DrawingTool.Selection ? "Selection  /  arrow keys move cells" : tool.ToString();
-        EditorCanvas.Focus(); EditorCanvas.InvalidateVisual();
+        FocusCanvas(); EditorCanvas.InvalidateVisual();
     }
 
     private void SetColor(uint color)
@@ -121,6 +121,10 @@ public partial class MainWindow : Window
         CurrentColorLabel.Text = ColorMath.Format(color); ColorInput.Text = ColorMath.Format(color);
         RefreshPalette(); EditorCanvas.InvalidateVisual();
     }
+
+    // Focusing anything inside a window activates that window, which a validation run on a display nobody is
+    // watching must never do: it would take the keyboard from whoever is working on another display.
+    private void FocusCanvas() { if (!App.KeepFocusAway) EditorCanvas.Focus(); }
 
     private static SolidColorBrush BrushFor(uint color) => new(Color.FromArgb((byte)(color >> 24), (byte)(color >> 16), (byte)(color >> 8), (byte)color));
 
@@ -204,7 +208,7 @@ public partial class MainWindow : Window
                 ToolTip = ColorMath.Format(color)
             };
             AutomationProperties.SetName(button, $"Color {ColorMath.Format(color)}");
-            button.Click += (_, _) => { SetColor(color); EditorCanvas.Focus(); };
+            button.Click += (_, _) => { SetColor(color); FocusCanvas(); };
             PalettePanel.Children.Add(button);
         }
     }
@@ -338,7 +342,7 @@ public partial class MainWindow : Window
 
     private void OnKeyDown(object sender, KeyEventArgs args)
     {
-        if (Keyboard.FocusedElement is TextBoxBase) { if (args.Key == Key.Escape) EditorCanvas.Focus(); return; }
+        if (Keyboard.FocusedElement is TextBoxBase) { if (args.Key == Key.Escape) FocusCanvas(); return; }
         var control = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         var shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
         if (Keyboard.FocusedElement is Slider && !control) return;
@@ -421,7 +425,7 @@ public partial class MainWindow : Window
     private void OpacityKeyboardFinished(object sender, KeyboardFocusChangedEventArgs args) => ApplyOpacity();
     private void ApplyOpacity() { if (!refreshing) Act(() => session.SetLayerOpacity((byte)Math.Round(LayerOpacity.Value))); }
 
-    private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); EditorCanvas.Focus(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
+    private void SetColorClicked(object sender, RoutedEventArgs args) { try { SetColor(ColorMath.Parse(ColorInput.Text)); FocusCanvas(); } catch (FormatException exception) { ShowError(exception.Message, exception); } }
     private void ColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetColorClicked(sender, args); args.Handled = true; } }
 
     // The background is opaque by definition, so an alpha the value carries is dropped rather than refused.
@@ -435,7 +439,7 @@ public partial class MainWindow : Window
         RefreshBackgroundColor();
     }
 
-    private void SetBackgroundColorClicked(object sender, RoutedEventArgs args) { SetBackgroundColor(BackgroundColorInput.Text); EditorCanvas.Focus(); }
+    private void SetBackgroundColorClicked(object sender, RoutedEventArgs args) { SetBackgroundColor(BackgroundColorInput.Text); FocusCanvas(); }
     private void BackgroundColorInputKeyDown(object sender, KeyEventArgs args) { if (args.Key == Key.Enter) { SetBackgroundColorClicked(sender, args); args.Handled = true; } }
 
     private void BackgroundColorClicked(object sender, RoutedEventArgs args)

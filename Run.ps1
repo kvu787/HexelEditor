@@ -1,4 +1,4 @@
-param([ValidateSet('Debug', 'Release')][string] $Configuration = 'Release', [string] $Project)
+param([ValidateSet('Debug', 'Release')][string] $Configuration = 'Release', [string] $Project, [string] $Display)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Scripts/Common.ps1')
@@ -9,9 +9,20 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 }
 $runFolder = New-EditorRunCopy -BuildFolder (Split-Path -Parent $executable)
 $startParameters = @{ FilePath = Join-Path $runFolder (Split-Path -Leaf $executable); WorkingDirectory = $RepositoryRoot }
+$arguments = @()
+if ($Display) {
+    # Validation fills the named display and takes no focus, so the editor can be looked at while someone
+    # else is working on this machine. Without -Display the editor opens normally, in front, as it should.
+    . (Join-Path $PSScriptRoot 'Scripts/Windowing.ps1')
+    $bounds = Get-DisplayBounds -Monitor $Display
+    $arguments += '--show-without-focus'
+    $arguments += "$($bounds.X),$($bounds.Y),$($bounds.Width),$($bounds.Height)"
+}
 if ($Project) {
     $projectFile = (Resolve-Path -LiteralPath $Project).Path
-    $startParameters.ArgumentList = '"' + $projectFile + '"'
+    $arguments += '"' + $projectFile + '"'
 }
+if ($arguments.Count -gt 0) { $startParameters.ArgumentList = $arguments -join ' ' }
 Start-Process @startParameters
+if ($Display) { Write-Output "Started on $Display ($($bounds.Width) x $($bounds.Height) at $($bounds.X),$($bounds.Y)) without taking focus." }
 Write-Output "Started: $($startParameters.FilePath)"

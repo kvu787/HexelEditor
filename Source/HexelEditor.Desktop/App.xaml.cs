@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -9,6 +10,11 @@ namespace HexelEditor.Desktop;
 public partial class App : Application
 {
     internal static SessionLog Log { get; private set; } = null!;
+
+    // Set for a validation run. The editor checks it before focusing anything, because focus is what pulls a
+    // window to the foreground and with it the keyboard of whoever is using the machine.
+    internal static bool KeepFocusAway { get; private set; }
+
     private readonly bool verifying;
 
     public App()
@@ -70,7 +76,60 @@ public partial class App : Application
             Shutdown();
             return;
         }
+        if (ParsePlacement(e.Args) is { } placement)
+        {
+            // Placing the window from SourceInitialized puts it on the wanted display before its first frame,
+            // so it never appears anywhere else first, and ShowActivated leaves the keyboard and mouse with
+            // whoever is using the machine. Together these let a validation run share a desk with its user.
+            window.WindowStartupLocation = WindowStartupLocation.Manual;
+            window.ShowActivated = false;
+            KeepFocusAway = true;
+            window.SourceInitialized += (_, _) => Place(window, placement);
+        }
         window.Show();
-        if (e.Args.Length == 1 && File.Exists(e.Args[0])) window.OpenProject(e.Args[0]);
+        var project = e.Args.FirstOrDefault(File.Exists);
+        if (project != null) window.OpenProject(project);
     }
+
+    // Bounds are physical pixels, the units the placing script measures displays in. WPF's own Left and Top
+    // are device-independent, which is not the same thing on a display that is scaled.
+    private static Int32Rect? ParsePlacement(string[] arguments)
+    {
+        var index = Array.IndexOf(arguments, ShowWithoutFocusOption);
+        if (index < 0) return null;
+        var parts = index + 1 < arguments.Length ? arguments[index + 1].Split(',') : [];
+        if (parts.Length != 4 || !parts.All(part => int.TryParse(part, out _)))
+            throw new ArgumentException($"{ShowWithoutFocusOption} takes x,y,width,height in whole pixels.");
+        var bounds = parts.Select(int.Parse).ToArray();
+        return new Int32Rect(bounds[0], bounds[1], bounds[2], bounds[3]);
+    }
+
+    private static void Place(Window window, Int32Rect bounds)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        // ShowActivated alone is not enough: the editor focuses its canvas as it loads, and focusing anything
+        // inside a window activates that window. WS_EX_NOACTIVATE refuses the foreground outright, so no
+        // amount of focusing here, or stray clicking, can pull the user's keyboard over to this window.
+        SetWindowLongPtrW(handle, ExtendedStyle, GetWindowLongPtrW(handle, ExtendedStyle) | NoActivateStyle);
+        SetWindowPos(handle, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, NoZOrder | NoActivate | NoOwnerZOrder);
+    }
+
+    private const string ShowWithoutFocusOption = "--show-without-focus";
+    private const uint NoZOrder = 0x0004, NoActivate = 0x0010, NoOwnerZOrder = 0x0200;
+    private const int ExtendedStyle = -20;
+    private static readonly IntPtr NoActivateStyle = 0x08000000;
+
+    // The generated LibraryImport marshaller needs unsafe code switched on for the whole project, which is a
+    // poor trade for one call made once per launch.
+#pragma warning disable SYSLIB1054
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindowLongPtrW(IntPtr handle, int index);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWindowLongPtrW(IntPtr handle, int index, IntPtr value);
+#pragma warning restore SYSLIB1054
 }
