@@ -258,6 +258,16 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public void TheDefaultPaletteFillsAFullGridOfDistinctOpaqueColors()
+    {
+        Assert.Equal(256, HexDocument.DefaultPalette.Length);
+        Assert.Equal(0, HexDocument.DefaultPalette.Length % HexDocument.PaletteColumns);
+        Assert.Equal(HexDocument.DefaultPalette.Length, HexDocument.DefaultPalette.Distinct().Count());
+        Assert.All(HexDocument.DefaultPalette, color => Assert.Equal(255u, color >> 24));
+        Assert.Equal(HexDocument.DefaultPalette, new HexDocument(1, 1).Palette);
+    }
+
+    [Fact]
     public void ThePaletteRejectsDuplicatesAndStopsAtItsLimit()
     {
         var session = new EditorSession(new HexDocument(1, 1));
