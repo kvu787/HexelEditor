@@ -85,3 +85,5 @@ Support Windows 11 x64 as the only target platform.
 ## Using physical displays
 
 If you need a display, only use NE18NZ2.
+
+After changing a runnable application, open it on NE18NZ2 and validate the change yourself as part of finishing the work. Don't ask for permission to open it, and don't ask whether the result looks right. Report what you verified and what you could not.
