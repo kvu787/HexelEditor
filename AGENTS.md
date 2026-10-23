@@ -1,5 +1,3 @@
-# Base template
-
 ## Style
 
 For single and double quotes, only use the ASCII forms: ', "
@@ -14,6 +12,11 @@ Support Windows 11 x64 as the only development platform.
 This only applies to things that we have the freedom to name as wanted.
 Use CamelCase.
 Use complete proper words. Don't use typical shortenings. Good: Source, Documentation. Bad: src, docs.
+
+## External tools
+
+You may use the tools in `%UserProfile%\Program`.
+You may refer to local copies of source repos in `%UserProfile%\Repository\External`.
 
 # PowerShell
 
