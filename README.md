@@ -1,6 +1,6 @@
 # Hexel Editor
 
-A desktop art and animation editor for a hexagonal grid, built with C#, .NET 10, WPF, and SkiaSharp. Development and releases target Windows 11 x64. The interface is a light, grayscale theme modelled on Visual Studio Code's default light theme: a menu bar, a tool rail, the canvas with its document tab, a timeline, and collapsible side bar sections.
+A desktop art editor for a hexagonal grid, built with C#, .NET 10, WPF, and SkiaSharp. Development and releases target Windows 11 x64. The interface is a light, grayscale theme modelled on Visual Studio Code's default light theme: a menu bar, a tool rail, the canvas with its document tab, and collapsible side bar sections.
 
 ![Hexel Editor](Documentation/EditorPreview.png)
 
@@ -11,20 +11,19 @@ pwsh -File ./Build.ps1
 pwsh -File ./Run.ps1
 ```
 
-Build restores NuGet dependencies and creates the Release build. Run exits with an error if that build is missing; it never builds the app. The animated "Neon tide" example opens with four editable frames and three layers. Use File > New canvas for a blank document, or open `Examples/NeonTide.hexel`.
+Build restores NuGet dependencies and creates the Release build. Run exits with an error if that build is missing; it never builds the app. The "Neon tide" example opens with three editable layers. Use File > New canvas for a blank document, or open `Examples/NeonTide.hexel`.
 
 ## Editing
 
 - Pointy-top and flat-top grids, up to 256 columns and 256 rows.
 - Pencil and eraser with hexagonal brushes, connected flood fill, eyedropper, lines, and outlined or filled rectangles.
 - Rectangular selections, cell copying and pasting, movement, and exact 60-degree rotations. Transforms clip at the canvas boundary and can be undone.
-- Layers with names, visibility, locking, opacity, and ordering. Every animation frame has an independent cel for each layer.
-- Blank and duplicate frames, per-frame timing, looping playback, and previous-frame onion skinning.
+- Layers with names, visibility, locking, opacity, and ordering, each holding its own cells.
 - Editable color values (`#RRGGBB` or `#AARRGGBB`) and a project palette.
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
-- Compressed `.hexel` projects, transparent PNG and SVG export, and horizontal PNG animation sprite sheets.
+- Compressed `.hexel` projects and transparent PNG and SVG export.
 
-The current release supports up to 32 layers, 128 frames, 256 palette colors, and 16,777,216 cells across all cels. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Standard bitmap import and animated GIF export are not implemented.
+The current release supports up to 32 layers, a 256 by 256 canvas, and 256 palette colors. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
 
 ## Shortcuts
 
@@ -45,12 +44,10 @@ The current release supports up to 32 layers, 128 frames, 256 palette colors, an
 | Select all / deselect               | Ctrl+A / Ctrl+D                       |
 | Move selected cells                 | Arrow keys                            |
 | Rotate clockwise / counterclockwise | Ctrl+R / Ctrl+Shift+R                 |
-| Clear selected cells or cel         | Delete                                |
-| Play / stop                         | Enter                                 |
-| Previous / next frame               | , / .                                 |
-| Deselect and stop playback          | Esc                                   |
+| Clear selected cells or layer       | Delete                                |
+| Deselect                            | Esc                                   |
 
-Export the current frame using the top-right Export PNG button. File also contains SVG and sprite-sheet exports. PNG uses a 16-pixel hexagon radius with transparency and no editor grid. Sprite-sheet frames have equal dimensions and run left to right in timeline order; their timings remain in the project. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
+Export the artwork using the top-right Export PNG button. File also contains the SVG export. PNG uses a 16-pixel hexagon radius with transparency and no editor grid. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
 
 ## Build and verification
 
@@ -64,8 +61,8 @@ pwsh -File ./Scripts/Publish.ps1
 ```
 
 - Build compiles the complete solution in Release mode with warnings treated as errors.
-- Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer and frame operations, and project persistence.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks PNG, SVG, and sprite-sheet exports, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
@@ -77,7 +74,7 @@ Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root,
 ## Source layout
 
 - `Source/HexelEditor.Core`: document model, axial/offset geometry, six-neighbor algorithms, editing history, example artwork, and project serialization. It has no WPF or Skia dependency.
-- `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, Skia canvas, animation playback, and image exporters. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control.
+- `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, Skia canvas, and image exporters. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control.
 - `Tests/HexelEditor.Tests`: xUnit tests for the editing core.
 - `Build.cmd` / `Build.ps1` and `Run.cmd` / `Run.ps1`: repository-root build and run entry points.
 - `Scripts`: shared PowerShell helpers, tests, verification, and publishing. The shared helper requires PowerShell 7 or later.
@@ -85,4 +82,4 @@ Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root,
 - `Examples`: the saved example project.
 - `Conversations`: the verbatim conversation history required by `AGENTS.md`.
 
-Project files are ZIP archives containing `Document.json` and little-endian 32-bit ARGB buffers at `Cells/<frame>/<layer>.bin`. Saves replace the destination only after writing a complete temporary archive. Loads validate dimensions, frame durations, buffer lengths, and resource limits before creating cell buffers. The reader accepts the current format only; no migration or backward-compatibility layer is maintained.
+Project files are ZIP archives containing `Document.json` and little-endian 32-bit ARGB buffers at `Cells/<layer>.bin`. Saves replace the destination only after writing a complete temporary archive. Loads validate dimensions, buffer lengths, and resource limits before creating cell buffers. The reader accepts the current format only; no migration or backward-compatibility layer is maintained.

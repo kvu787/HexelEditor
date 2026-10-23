@@ -121,7 +121,7 @@ public sealed class EditorTests
     }
 
     [Fact]
-    public void LayersRetainIndependentCelsThroughStructuralUndo()
+    public void LayersRetainIndependentCellsThroughStructuralUndo()
     {
         var session = new EditorSession(new HexDocument(5, 5));
         session.Paint(new(0, 0), Red); session.EndStroke(); session.AddLayer();
@@ -174,7 +174,7 @@ public sealed class EditorTests
     }
 
     [Fact]
-    public void ANewLayerIsBlankAndDeletingOneKeepsTheRemainingCels()
+    public void ANewLayerIsBlankAndDeletingOneKeepsTheRemainingCells()
     {
         var session = new EditorSession(new HexDocument(4, 4)); session.Paint(new(0, 0), Red); session.EndStroke();
         session.AddLayer();
@@ -271,7 +271,7 @@ public sealed class EditorTests
     }
 
     [Fact]
-    public void ArchiveRoundTripPreservesEveryCelAndMetadata()
+    public void ArchiveRoundTripPreservesEveryLayerAndItsMetadata()
     {
         var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + ".hexel");
         try
@@ -321,7 +321,7 @@ public sealed class EditorTests
     [InlineData("{}")]
     [InlineData("{\"Format\":1,\"Width\":9999999,\"Height\":256}")]
     [InlineData("{broken")]
-    // The untampered manifest only fails on its absent cels, which proves the tampered values below are what the reader rejects.
+    // The untampered manifest only fails on its absent cell buffers, which proves the tampered values below are what the reader rejects.
     [InlineData(ValidManifest)]
     [InlineData(ValidManifest, "\"Format\":1", "\"Format\":2")]
     [InlineData(ValidManifest, "\"Layers\":[{\"Name\":\"Layer 1\",\"Visible\":true,\"Locked\":false,\"Opacity\":255}]", "\"Layers\":[]")]
