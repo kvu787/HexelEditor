@@ -52,8 +52,8 @@ public sealed class EditorTests
         var session = new EditorSession(new HexDocument(10, 10));
         session.BeginStroke(); session.Paint(new(1, 1), Red); session.Paint(new(2, 1), Red); session.Paint(new(1, 1), Blue); session.EndStroke();
         Assert.True(session.IsDirty); session.Undo();
-        Assert.All(session.Document.Frames[0].Cells[0], color => Assert.Equal(0u, color)); Assert.False(session.CanUndo); Assert.False(session.IsDirty);
-        session.Redo(); Assert.Equal(Blue, session.Document.Frames[0].Cells[0][session.Document.IndexOf(new(1, 1))]);
+        Assert.All(session.Document.Layers[0].Cells, color => Assert.Equal(0u, color)); Assert.False(session.CanUndo); Assert.False(session.IsDirty);
+        session.Redo(); Assert.Equal(Blue, session.Document.Layers[0].Cells[session.Document.IndexOf(new(1, 1))]);
     }
 
     [Fact]
@@ -84,9 +84,9 @@ public sealed class EditorTests
         var center = document.CoordinateAt(6 * document.Width + 6);
         foreach (var direction in HexCoordinate.Directions) session.Paint(center + direction, Red);
         session.EndStroke(); session.FloodFill(center, Blue);
-        Assert.Equal(1, document.Frames[0].Cells[0].Count(color => color == Blue));
+        Assert.Equal(1, document.Layers[0].Cells.Count(color => color == Blue));
         session.FloodFill(document.CoordinateAt(0), Blue);
-        Assert.Equal(document.CellCount - 6, document.Frames[0].Cells[0].Count(color => color == Blue));
+        Assert.Equal(document.CellCount - 6, document.Layers[0].Cells.Count(color => color == Blue));
     }
 
     [Fact]
@@ -95,9 +95,9 @@ public sealed class EditorTests
         var document = new HexDocument(8, 8); var session = new EditorSession(document);
         session.SelectRectangle(document.CoordinateAt(18), document.CoordinateAt(27));
         Assert.Equal(4, session.Selection.Count);
-        session.FloodFill(document.CoordinateAt(18), Red); Assert.Equal(4, document.Frames[0].Cells[0].Count(color => color == Red));
-        session.Paint(document.CoordinateAt(0), Blue, 8); session.EndStroke(); Assert.Equal(4, document.Frames[0].Cells[0].Count(color => color == Blue));
-        session.ClearPixels(); Assert.All(document.Frames[0].Cells[0], color => Assert.Equal(0u, color));
+        session.FloodFill(document.CoordinateAt(18), Red); Assert.Equal(4, document.Layers[0].Cells.Count(color => color == Red));
+        session.Paint(document.CoordinateAt(0), Blue, 8); session.EndStroke(); Assert.Equal(4, document.Layers[0].Cells.Count(color => color == Blue));
+        session.ClearPixels(); Assert.All(document.Layers[0].Cells, color => Assert.Equal(0u, color));
     }
 
     [Fact]
@@ -106,8 +106,8 @@ public sealed class EditorTests
         var session = new EditorSession(new HexDocument(8, 2)); var document = session.Document;
         session.Paint(document.CoordinateAt(0), Red); session.Paint(document.CoordinateAt(1), Blue); session.EndStroke();
         session.SelectRectangle(document.CoordinateAt(0), document.CoordinateAt(1)); session.MoveSelection(1, 0);
-        Assert.Equal(new uint[] { 0, Red, Blue }, document.Frames[0].Cells[0].Take(3));
-        session.Undo(); Assert.Equal(new uint[] { Red, Blue, 0 }, document.Frames[0].Cells[0].Take(3));
+        Assert.Equal(new uint[] { 0, Red, Blue }, document.Layers[0].Cells.Take(3));
+        session.Undo(); Assert.Equal(new uint[] { Red, Blue, 0 }, document.Layers[0].Cells.Take(3));
     }
 
     [Fact]
@@ -117,19 +117,19 @@ public sealed class EditorTests
         session.Paint(new(0, 0), 0x80223344); session.Paint(new(1, 0), Red); session.EndStroke();
         session.SelectRectangle(new(0, 0), new(1, 0)); var clipboard = session.CopySelection();
         session.Paste(clipboard, 2, 1);
-        Assert.Equal(0x80223344u, session.Document.Frames[0].Cells[0][5]); Assert.Single(session.Selection);
+        Assert.Equal(0x80223344u, session.Document.Layers[0].Cells[5]); Assert.Single(session.Selection);
     }
 
     [Fact]
-    public void LayersAndFramesRetainIndependentCelsThroughStructuralUndo()
+    public void LayersRetainIndependentCelsThroughStructuralUndo()
     {
         var session = new EditorSession(new HexDocument(5, 5));
-        session.Paint(new(0, 0), Red); session.EndStroke(); session.AddFrame(true); session.AddLayer();
+        session.Paint(new(0, 0), Red); session.EndStroke(); session.AddLayer();
         session.Paint(new(0, 0), Blue); session.EndStroke();
-        Assert.Equal(Blue, session.Document.CompositeAt(0, 1)); Assert.Equal(Red, session.Document.CompositeAt(0, 0));
-        session.Undo(); session.Undo(); Assert.Single(session.Document.Layers); Assert.Equal(2, session.Document.Frames.Count);
-        session.Redo(); session.Redo(); Assert.Equal(Blue, session.Document.CompositeAt(0, 1));
-        session.MoveLayer(-1); Assert.Equal(Red, session.Document.CompositeAt(0, 1)); session.Undo(); Assert.Equal(Blue, session.Document.CompositeAt(0, 1));
+        Assert.Equal(Blue, session.Document.CompositeAt(0)); Assert.Equal(Red, session.Document.Layers[0].Cells[0]);
+        session.Undo(); session.Undo(); Assert.Single(session.Document.Layers);
+        session.Redo(); session.Redo(); Assert.Equal(Blue, session.Document.CompositeAt(0));
+        session.MoveLayer(-1); Assert.Equal(Red, session.Document.CompositeAt(0)); session.Undo(); Assert.Equal(Blue, session.Document.CompositeAt(0));
     }
 
     [Fact]
@@ -138,24 +138,24 @@ public sealed class EditorTests
         var session = new EditorSession(new HexDocument(3, 3)); session.SetLayerLocked(0, true); session.MarkSaved();
         session.Paint(new(0, 0), Red); session.EndStroke(); session.FloodFill(new(0, 0), Red); session.DrawLine(new(0, 0), new(2, 0), Red, 0);
         session.Paste(new CellClipboard([new(0, 0, Blue)]), 0, 0); session.ClearPixels();
-        Assert.All(session.Document.Frames[0].Cells[0], color => Assert.Equal(0u, color)); Assert.False(session.IsDirty);
+        Assert.All(session.Document.Layers[0].Cells, color => Assert.Equal(0u, color)); Assert.False(session.IsDirty);
     }
 
     [Fact]
     public void CompositeRespectsLayerVisibilityOpacityAndSourceAlpha()
     {
-        var document = new HexDocument(1, 1); document.Frames[0].Cells[0][0] = Blue;
-        document.Layers.Add(new HexLayer { Opacity = 128 }); document.Frames[0].Cells.Add([Red]);
-        Assert.Equal(0xFF80007Fu, document.CompositeAt(0, 0));
-        document.Layers[1].Visible = false; Assert.Equal(Blue, document.CompositeAt(0, 0));
+        var document = new HexDocument(1, 1); document.Layers[0].Cells[0] = Blue;
+        document.Layers.Add(new HexLayer(1) { Opacity = 128 }); document.Layers[1].Cells[0] = Red;
+        Assert.Equal(0xFF80007Fu, document.CompositeAt(0));
+        document.Layers[1].Visible = false; Assert.Equal(Blue, document.CompositeAt(0));
         Assert.Equal(0x80223344u, ColorMath.Over(0x80223344, 0));
     }
 
     [Fact]
-    public void LastLayerAndFrameCannotBeDeleted()
+    public void TheLastLayerCannotBeDeleted()
     {
-        var session = new EditorSession(new HexDocument(1, 1)); session.DeleteLayer(); session.DeleteFrame();
-        Assert.Single(session.Document.Layers); Assert.Single(session.Document.Frames); Assert.False(session.IsDirty);
+        var session = new EditorSession(new HexDocument(1, 1)); session.DeleteLayer();
+        Assert.Single(session.Document.Layers); Assert.False(session.IsDirty);
     }
 
     [Theory]
@@ -168,19 +168,20 @@ public sealed class EditorTests
         var source = center + new HexCoordinate(1, 0); var destination = center + new HexCoordinate(0, 1);
         session.Paint(source, Red); session.EndStroke(); session.Selection.UnionWith(center.Disk(1).Select(document.IndexOf));
         session.RotateSelection(1);
-        Assert.Equal(Red, document.Frames[0].Cells[0][document.IndexOf(destination)]); Assert.Equal(0u, document.Frames[0].Cells[0][document.IndexOf(source)]);
-        session.RotateSelection(-1); Assert.Equal(Red, document.Frames[0].Cells[0][document.IndexOf(source)]);
-        session.Undo(); Assert.Equal(Red, document.Frames[0].Cells[0][document.IndexOf(destination)]);
+        Assert.Equal(Red, document.Layers[0].Cells[document.IndexOf(destination)]); Assert.Equal(0u, document.Layers[0].Cells[document.IndexOf(source)]);
+        session.RotateSelection(-1); Assert.Equal(Red, document.Layers[0].Cells[document.IndexOf(source)]);
+        session.Undo(); Assert.Equal(Red, document.Layers[0].Cells[document.IndexOf(destination)]);
     }
 
     [Fact]
-    public void BlankFramesAndDeletedLayersKeepAllFrameBuffersAligned()
+    public void ANewLayerIsBlankAndDeletingOneKeepsTheRemainingCels()
     {
         var session = new EditorSession(new HexDocument(4, 4)); session.Paint(new(0, 0), Red); session.EndStroke();
-        session.AddLayer(); session.Paint(new(0, 0), Blue); session.EndStroke(); session.AddFrame(false);
-        Assert.All(session.Document.Frames[1].Cells.SelectMany(cells => cells), color => Assert.Equal(0u, color));
-        session.DeleteLayer(); Assert.All(session.Document.Frames, frame => Assert.Single(frame.Cells));
-        Assert.Equal(Red, session.Document.Frames[0].Cells[0][0]); session.Undo(); Assert.All(session.Document.Frames, frame => Assert.Equal(2, frame.Cells.Count));
+        session.AddLayer();
+        Assert.All(session.Document.Layers[1].Cells, color => Assert.Equal(0u, color));
+        session.Paint(new(0, 0), Blue); session.EndStroke(); session.DeleteLayer();
+        Assert.Single(session.Document.Layers); Assert.Equal(Red, session.Document.Layers[0].Cells[0]);
+        session.Undo(); Assert.Equal(2, session.Document.Layers.Count); Assert.Equal(Blue, session.Document.Layers[1].Cells[0]);
     }
 
     [Fact]
@@ -188,12 +189,12 @@ public sealed class EditorTests
     {
         var session = new EditorSession(new HexDocument(12, 12));
         session.Paint(new(1, 4), Red); session.Paint(new(1, 5), Blue); session.EndStroke();
-        var original = (uint[])session.Document.Frames[0].Cells[0].Clone();
+        var original = (uint[])session.Document.Layers[0].Cells.Clone();
         session.Selection.UnionWith(new[] { session.Document.IndexOf(new(1, 4)), session.Document.IndexOf(new(1, 5)) });
         session.RotateSelection(1); session.RotateSelection(-1);
-        Assert.Equal(original, session.Document.Frames[0].Cells[0]);
+        Assert.Equal(original, session.Document.Layers[0].Cells);
         for (var turn = 0; turn < 6; turn++) session.RotateSelection(1);
-        Assert.Equal(original, session.Document.Frames[0].Cells[0]);
+        Assert.Equal(original, session.Document.Layers[0].Cells);
     }
 
     [Fact]
@@ -208,23 +209,24 @@ public sealed class EditorTests
     }
 
     [Fact]
-    public void PixelUndoActivatesTheFrameAndLayerThatItChanges()
+    public void PixelUndoActivatesTheLayerThatItChanges()
     {
         var session = new EditorSession(new HexDocument(3, 2));
-        session.AddFrame(true); session.AddLayer(); session.Paint(new(0, 0), Blue); session.EndStroke();
-        session.SelectFrame(0); session.SelectLayer(0); session.Undo();
-        Assert.Equal(1, session.ActiveFrame); Assert.Equal(1, session.ActiveLayer);
-        Assert.Equal(0u, session.Document.Frames[1].Cells[1][0]);
+        session.AddLayer(); session.Paint(new(0, 0), Blue); session.EndStroke();
+        session.SelectLayer(0); session.Undo();
+        Assert.Equal(1, session.ActiveLayer);
+        Assert.Equal(0u, session.Document.Layers[1].Cells[0]);
     }
 
     [Fact]
-    public void InvalidCanvasAndDurationAndCapacityAreRejected()
+    public void InvalidCanvasSizesAndTheLayerLimitAreRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(0, 20));
         Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(257, 20));
-        var session = new EditorSession(new HexDocument(256, 256));
-        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetFrameDuration(0));
-        Assert.Throws<InvalidOperationException>(() => session.Document.ValidateCapacity(32, 128));
+        var session = new EditorSession(new HexDocument(2, 2));
+        while (session.Document.Layers.Count < HexDocument.MaximumLayers) session.AddLayer();
+        Assert.Throws<InvalidOperationException>(session.AddLayer);
+        Assert.Equal(HexDocument.MaximumLayers, session.Document.Layers.Count);
     }
 
     [Theory]
@@ -256,18 +258,6 @@ public sealed class EditorTests
     }
 
     [Fact]
-    public void FrameDurationsAreAcceptedOnlyWithinTheDocumentedRange()
-    {
-        var session = new EditorSession(new HexDocument(2, 2));
-        session.SetFrameDuration(HexDocument.MinimumFrameDuration);
-        Assert.Equal(HexDocument.MinimumFrameDuration, session.Document.Frames[0].DurationMilliseconds);
-        session.SetFrameDuration(HexDocument.MaximumFrameDuration);
-        Assert.Equal(HexDocument.MaximumFrameDuration, session.Document.Frames[0].DurationMilliseconds);
-        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetFrameDuration(HexDocument.MinimumFrameDuration - 1));
-        Assert.Throws<ArgumentOutOfRangeException>(() => session.SetFrameDuration(HexDocument.MaximumFrameDuration + 1));
-    }
-
-    [Fact]
     public void ThePaletteRejectsDuplicatesAndStopsAtItsLimit()
     {
         var session = new EditorSession(new HexDocument(1, 1));
@@ -287,14 +277,15 @@ public sealed class EditorTests
         try
         {
             var session = new EditorSession(new HexDocument(7, 9, HexOrientation.FlatTop) { Name = "Test scene" });
-            session.AddLayer(); session.SetLayerName("Highlights"); session.SetLayerOpacity(123); session.AddFrame(true); session.SetFrameDuration(333);
+            session.AddLayer(); session.SetLayerName("Highlights"); session.SetLayerOpacity(123);
             session.Paint(session.Document.CoordinateAt(20), 0x80223344); session.EndStroke(); session.AddPaletteColor(0xAABBCCDD);
             ProjectFile.Save(session.Document, path); var loaded = ProjectFile.Load(path);
-            Assert.Equal(session.Document.Name, loaded.Name); Assert.Equal(HexOrientation.FlatTop, loaded.Orientation); Assert.Equal(123, loaded.Layers[1].Opacity);
-            Assert.Equal(333, loaded.Frames[1].DurationMilliseconds); Assert.Equal(session.Document.Palette, loaded.Palette);
-            for (var frame = 0; frame < 2; frame++) for (var layer = 0; layer < 2; layer++) Assert.Equal(session.Document.Frames[frame].Cells[layer], loaded.Frames[frame].Cells[layer]);
+            Assert.Equal(session.Document.Name, loaded.Name); Assert.Equal(HexOrientation.FlatTop, loaded.Orientation);
+            Assert.Equal("Highlights", loaded.Layers[1].Name); Assert.Equal(123, loaded.Layers[1].Opacity);
+            Assert.Equal(session.Document.Palette, loaded.Palette);
+            for (var layer = 0; layer < 2; layer++) Assert.Equal(session.Document.Layers[layer].Cells, loaded.Layers[layer].Cells);
             // Saving over an existing file is also a complete atomic replacement.
-            ProjectFile.Save(loaded, path); Assert.Equal(2, ProjectFile.Load(path).Frames.Count);
+            ProjectFile.Save(loaded, path); Assert.Equal(2, ProjectFile.Load(path).Layers.Count);
         }
         finally { if (File.Exists(path)) File.Delete(path); }
     }
@@ -306,7 +297,7 @@ public sealed class EditorTests
         try
         {
             ProjectFile.Save(new HexDocument(2, 2), path);
-            using (var archive = ZipFile.Open(path, ZipArchiveMode.Update)) archive.GetEntry("Cells/0/0.bin")!.Delete();
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Update)) archive.GetEntry("Cells/0.bin")!.Delete();
             Assert.Throws<InvalidDataException>(() => ProjectFile.Load(path));
         }
         finally { File.Delete(path); }
@@ -333,8 +324,7 @@ public sealed class EditorTests
     // The untampered manifest only fails on its absent cels, which proves the tampered values below are what the reader rejects.
     [InlineData(ValidManifest)]
     [InlineData(ValidManifest, "\"Format\":1", "\"Format\":2")]
-    [InlineData(ValidManifest, "\"Durations\":[150]", "\"Durations\":[19]")]
-    [InlineData(ValidManifest, "\"Durations\":[150]", "\"Durations\":[10001]")]
+    [InlineData(ValidManifest, "\"Layers\":[{\"Name\":\"Layer 1\",\"Visible\":true,\"Locked\":false,\"Opacity\":255}]", "\"Layers\":[]")]
     [InlineData(ValidManifest, "\"Palette\":[4278190080]", "\"Palette\":[]")]
     [InlineData(ValidManifest, "\"Name\":\"Tampered\"", "\"Name\":null")]
     [InlineData(ValidManifest, "\"Name\":\"Layer 1\"", "\"Name\":\" \"")]
@@ -356,6 +346,6 @@ public sealed class EditorTests
     private const string ValidManifest = """
         {"Format":1,"Name":"Tampered","Width":2,"Height":2,"Orientation":0,
          "Layers":[{"Name":"Layer 1","Visible":true,"Locked":false,"Opacity":255}],
-         "Durations":[150],"Palette":[4278190080]}
+         "Palette":[4278190080]}
         """;
 }

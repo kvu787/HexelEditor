@@ -85,7 +85,7 @@ public sealed class HexCanvas : SKElement
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
-        ArtworkRenderer.Draw(canvas, session.Document, session.ActiveFrame, true, ShowGrid, Zoom);
+        ArtworkRenderer.Draw(canvas, session.Document, true, ShowGrid, Zoom);
         using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
         using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(0, 95, 184, 40) };
@@ -137,7 +137,7 @@ public sealed class HexCanvas : SKElement
         eraseGesture = args.ChangedButton == MouseButton.Right;
         if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0 || Tool == DrawingTool.Eyedropper)
         {
-            ColorPicked?.Invoke(session.Document.CompositeAt(session.Document.IndexOf(hover.Value), session.ActiveFrame)); return;
+            ColorPicked?.Invoke(session.Document.CompositeAt(session.Document.IndexOf(hover.Value))); return;
         }
         if (Tool == DrawingTool.Fill) { session.FloodFill(hover.Value, eraseGesture ? 0 : ForegroundColor); return; }
         drawing = true; start = previous = hover; CaptureMouse();

@@ -34,7 +34,7 @@ public static class ArtworkRenderer
         path.Close(); return path.Detach();
     }
 
-    public static void Draw(SKCanvas canvas, HexDocument document, int frameIndex, bool paper = false, bool grid = false, float zoom = 1)
+    public static void Draw(SKCanvas canvas, HexDocument document, bool paper = false, bool grid = false, float zoom = 1)
     {
         using var path = Hexagon(document.Orientation);
         using var fill = new SKPaint { IsAntialias = true };
@@ -51,7 +51,7 @@ public static class ArtworkRenderer
                 fill.Color = (index % document.Width + index / document.Width) % 2 == 0 ? new SKColor(255, 255, 255) : new SKColor(233, 233, 233);
                 canvas.DrawPath(path, fill);
             }
-            var color = document.CompositeAt(index, frameIndex);
+            var color = document.CompositeAt(index);
             if ((color >> 24) > 0)
             {
                 fill.Color = new SKColor(color);
@@ -62,7 +62,7 @@ public static class ArtworkRenderer
         }
     }
 
-    public static void ExportPng(HexDocument document, int frameIndex, string path)
+    public static void ExportPng(HexDocument document, string path)
     {
         const float exportScale = 16f / CellRadius;
         var bounds = Bounds(document);
@@ -72,19 +72,19 @@ public static class ArtworkRenderer
         using var surface = SKSurface.Create(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul)) ?? throw new InvalidOperationException("Could not create the export image.");
         surface.Canvas.Clear(SKColors.Transparent);
         surface.Canvas.Translate(1 - bounds.Left * exportScale, 1 - bounds.Top * exportScale); surface.Canvas.Scale(exportScale);
-        Draw(surface.Canvas, document, frameIndex);
+        Draw(surface.Canvas, document);
         using var image = surface.Snapshot(); using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var output = File.Create(path); data.SaveTo(output);
     }
 
-    public static void ExportSvg(HexDocument document, int frameIndex, string path)
+    public static void ExportSvg(HexDocument document, string path)
     {
         var bounds = Bounds(document);
         static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
         var builder = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{Number(bounds.Left - 1)} {Number(bounds.Top - 1)} {Number(bounds.Width + 2)} {Number(bounds.Height + 2)}\">\n");
         for (var index = 0; index < document.CellCount; index++)
         {
-            var color = document.CompositeAt(index, frameIndex);
+            var color = document.CompositeAt(index);
             if ((color >> 24) == 0) continue;
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
             builder.Append("<polygon points=\"");

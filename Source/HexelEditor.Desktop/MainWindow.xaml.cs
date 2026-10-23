@@ -284,8 +284,8 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog(this) != true) return;
         try
         {
-            if (format == "svg") ArtworkRenderer.ExportSvg(session.Document, session.ActiveFrame, dialog.FileName);
-            else ArtworkRenderer.ExportPng(session.Document, session.ActiveFrame, dialog.FileName);
+            if (format == "svg") ArtworkRenderer.ExportSvg(session.Document, dialog.FileName);
+            else ArtworkRenderer.ExportPng(session.Document, dialog.FileName);
             StatusLabel.Text = $"Exported {System.IO.Path.GetFileName(dialog.FileName)}";
             App.Log.Write($"Exported artwork: {dialog.FileName}");
         }
@@ -409,20 +409,20 @@ public partial class MainWindow : Window
 
     public void VerifyEditor(string folder)
     {
-        var original = session.Document.CompositeAt(0, 0);
+        var original = session.Document.CompositeAt(0);
         session.Paint(session.Document.CoordinateAt(0), 0xFF00FF00); session.EndStroke();
         if (!UndoButton.IsEnabled || UnsavedMarker.Visibility != Visibility.Visible) throw new InvalidOperationException("The interface did not reflect the edit.");
         UndoButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        if (session.IsDirty || session.Document.CompositeAt(0, 0) != original) throw new InvalidOperationException("The Undo button did not restore the artwork.");
+        if (session.IsDirty || session.Document.CompositeAt(0) != original) throw new InvalidOperationException("The Undo button did not restore the artwork.");
         toolButtons[DrawingTool.Eraser].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         if (EditorCanvas.Tool != DrawingTool.Eraser) throw new InvalidOperationException("The tool button did not select the eraser.");
         SetTool(DrawingTool.Pencil);
         AttachSession(new EditorSession(ExampleDocument.Create()));
         var path = System.IO.Path.Combine(folder, "Example.hexel"); ProjectFile.Save(session.Document, path);
         var roundTrip = ProjectFile.Load(path);
-        if (roundTrip.Frames.Count != 4 || roundTrip.CompositeAt(0, 0) != session.Document.CompositeAt(0, 0)) throw new InvalidDataException("Project round trip failed.");
-        ArtworkRenderer.ExportPng(roundTrip, 0, System.IO.Path.Combine(folder, "Artwork.png"));
-        ArtworkRenderer.ExportSvg(roundTrip, 0, System.IO.Path.Combine(folder, "Artwork.svg"));
+        if (roundTrip.Layers.Count != 3 || roundTrip.CompositeAt(0) != session.Document.CompositeAt(0)) throw new InvalidDataException("Project round trip failed.");
+        ArtworkRenderer.ExportPng(roundTrip, System.IO.Path.Combine(folder, "Artwork.png"));
+        ArtworkRenderer.ExportSvg(roundTrip, System.IO.Path.Combine(folder, "Artwork.svg"));
         using var image = SkiaSharp.SKBitmap.Decode(System.IO.Path.Combine(folder, "Artwork.png"));
         if (image == null || image.Width < 100 || image.Height < 100) throw new InvalidDataException("PNG export verification failed.");
         var bounds = ArtworkRenderer.Bounds(roundTrip);
@@ -430,12 +430,12 @@ public partial class MainWindow : Window
         {
             var (x, y) = HexGeometry.Center(roundTrip.CoordinateAt(index), roundTrip.Orientation, 16);
             var pixel = image.GetPixel((int)Math.Round(x + 1 - bounds.Left * 16 / ArtworkRenderer.CellRadius), (int)Math.Round(y + 1 - bounds.Top * 16 / ArtworkRenderer.CellRadius));
-            if ((uint)pixel != roundTrip.CompositeAt(index, 0)) throw new InvalidDataException($"PNG color mismatch at cell {index}.");
+            if ((uint)pixel != roundTrip.CompositeAt(index)) throw new InvalidDataException($"PNG color mismatch at cell {index}.");
         }
         var svg = System.Xml.Linq.XDocument.Load(System.IO.Path.Combine(folder, "Artwork.svg"));
         if (svg.Root?.Elements().Count() != roundTrip.CellCount) throw new InvalidDataException("SVG geometry is incomplete.");
         var blankPath = System.IO.Path.Combine(folder, "Transparent.png");
-        ArtworkRenderer.ExportPng(new HexDocument(1, 1, HexOrientation.FlatTop), 0, blankPath);
+        ArtworkRenderer.ExportPng(new HexDocument(1, 1, HexOrientation.FlatTop), blankPath);
         using var blank = SkiaSharp.SKBitmap.Decode(blankPath);
         if (blank.Pixels.Any(pixel => pixel.Alpha != 0)) throw new InvalidDataException("Empty exported cells are not transparent.");
         EditorCanvas.Fit(); UpdateLayout();

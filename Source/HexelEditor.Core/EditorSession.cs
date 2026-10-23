@@ -1,7 +1,7 @@
 namespace HexelEditor.Core;
 
 [Flags]
-public enum EditorChange { Pixels = 1, Structure = 2, Selection = 4, History = 8, Document = 16, All = 31 }
+public enum EditorChange { Pixels = 1, Structure = 2, Selection = 4, History = 8, All = 15 }
 
 public sealed class EditorSession
 {
@@ -11,7 +11,6 @@ public sealed class EditorSession
     private readonly List<HistoryItem> redo = [];
     private Dictionary<int, uint>? stroke;
     private int strokeLayer;
-    private int strokeFrame;
     private SelectionState? strokeSelection;
     private HexCoordinate? selectionPivot;
     private long revision;
@@ -20,7 +19,6 @@ public sealed class EditorSession
     private long historyBytes;
     public HexDocument Document { get; private set; }
     public int ActiveLayer { get; private set; }
-    public int ActiveFrame { get; private set; }
     public HashSet<int> Selection { get; } = [];
     public bool IsDirty => revision != savedRevision || stroke?.Count > 0;
     public bool CanUndo => undo.Count > 0;
@@ -34,14 +32,12 @@ public sealed class EditorSession
     public void Notify(EditorChange change) => Changed?.Invoke(change);
     public void MarkSaved() { savedRevision = revision; Notify(EditorChange.History); }
     public void SelectLayer(int index) { EndStroke(); ActiveLayer = Math.Clamp(index, 0, Document.Layers.Count - 1); Notify(EditorChange.Structure); }
-    public void SelectFrame(int index) { EndStroke(); ActiveFrame = Math.Clamp(index, 0, Document.Frames.Count - 1); Notify(EditorChange.Structure); }
 
     public void BeginStroke(bool captureSelection = false)
     {
         if (stroke != null) return;
         stroke = [];
         strokeLayer = ActiveLayer;
-        strokeFrame = ActiveFrame;
         strokeSelection = captureSelection ? CaptureSelection() : null;
     }
 
@@ -56,7 +52,7 @@ public sealed class EditorSession
     private void SetPixel(int index, uint color)
     {
         if (index < 0 || index >= Document.CellCount || (Selection.Count > 0 && !Selection.Contains(index))) return;
-        var cells = Document.Frames[strokeFrame].Cells[strokeLayer];
+        var cells = Document.Layers[strokeLayer].Cells;
         if (cells[index] == color) return;
         stroke!.TryAdd(index, cells[index]);
         cells[index] = color;
@@ -65,10 +61,10 @@ public sealed class EditorSession
     public void EndStroke(string label = "Brush stroke")
     {
         if (stroke == null) return;
-        var cells = Document.Frames[strokeFrame].Cells[strokeLayer];
+        var cells = Document.Layers[strokeLayer].Cells;
         var edits = stroke.Where(pair => pair.Value != cells[pair.Key]).Select(pair => new PixelDelta(pair.Key, pair.Value, cells[pair.Key])).ToArray();
         stroke = null;
-        if (edits.Length > 0) { Commit(label, new PixelChange(strokeFrame, strokeLayer, edits, strokeSelection, strokeSelection == null ? null : CaptureSelection())); Notify(EditorChange.Pixels | EditorChange.History); }
+        if (edits.Length > 0) { Commit(label, new PixelChange(strokeLayer, edits, strokeSelection, strokeSelection == null ? null : CaptureSelection())); Notify(EditorChange.Pixels | EditorChange.History); }
         else Notify(EditorChange.History);
         strokeSelection = null;
     }
@@ -78,7 +74,7 @@ public sealed class EditorSession
         EndStroke();
         var start = Document.IndexOf(coordinate);
         if (!CanPaint || start < 0 || (Selection.Count > 0 && !Selection.Contains(start))) return;
-        var cells = Document.Frames[ActiveFrame].Cells[ActiveLayer];
+        var cells = Document.Layers[ActiveLayer].Cells;
         var target = cells[start];
         if (target == color) return;
         BeginStroke();
@@ -156,7 +152,7 @@ public sealed class EditorSession
         var indices = Selection.Count > 0 ? Selection.ToArray() : Enumerable.Range(0, Document.CellCount).ToArray();
         var left = indices.Min(index => index % Document.Width);
         var top = indices.Min(index => index / Document.Width);
-        var cells = Document.Frames[ActiveFrame].Cells[ActiveLayer];
+        var cells = Document.Layers[ActiveLayer].Cells;
         return new CellClipboard(indices.Select(index => new ClipboardCell(index % Document.Width - left, index / Document.Width - top, cells[index])).ToArray());
     }
 
@@ -212,12 +208,11 @@ public sealed class EditorSession
 
     public void AddLayer()
     {
-        Document.ValidateCapacity(Document.Layers.Count + 1, Document.Frames.Count);
+        Document.ValidateLayerCount(Document.Layers.Count + 1);
         ChangeDocument("Add layer", () =>
         {
             var index = ActiveLayer + 1;
-            Document.Layers.Insert(index, new HexLayer { Name = $"Layer {Document.Layers.Count + 1}" });
-            foreach (var frame in Document.Frames) frame.Cells.Insert(index, new uint[Document.CellCount]);
+            Document.Layers.Insert(index, new HexLayer(Document.CellCount) { Name = $"Layer {Document.Layers.Count + 1}" });
             ActiveLayer = index;
         });
     }
@@ -226,7 +221,7 @@ public sealed class EditorSession
     {
         if (!CanPaint || Selection.Count == 0) return;
         EndStroke();
-        var selected = Selection.Select(index => (Coordinate: Document.CoordinateAt(index), Color: Document.Frames[ActiveFrame].Cells[ActiveLayer][index])).ToArray();
+        var selected = Selection.Select(index => (Coordinate: Document.CoordinateAt(index), Color: Document.Layers[ActiveLayer].Cells[index])).ToArray();
         var pivot = selectionPivot ?? HexCoordinate.Round(selected.Average(cell => cell.Coordinate.Q), selected.Average(cell => cell.Coordinate.R));
         var turns = (steps % 6 + 6) % 6;
         if (turns == 0) return;
@@ -253,7 +248,6 @@ public sealed class EditorSession
         ChangeDocument("Delete layer", () =>
         {
             Document.Layers.RemoveAt(ActiveLayer);
-            foreach (var frame in Document.Frames) frame.Cells.RemoveAt(ActiveLayer);
             ActiveLayer = Math.Min(ActiveLayer, Document.Layers.Count - 1);
         });
     }
@@ -265,7 +259,6 @@ public sealed class EditorSession
         ChangeDocument("Reorder layer", () =>
         {
             (Document.Layers[target], Document.Layers[ActiveLayer]) = (Document.Layers[ActiveLayer], Document.Layers[target]);
-            foreach (var frame in Document.Frames) (frame.Cells[target], frame.Cells[ActiveLayer]) = (frame.Cells[ActiveLayer], frame.Cells[target]);
             ActiveLayer = target;
         });
     }
@@ -281,36 +274,12 @@ public sealed class EditorSession
         return true;
     }
 
-    public void AddFrame(bool duplicate)
-    {
-        Document.ValidateCapacity(Document.Layers.Count, Document.Frames.Count + 1);
-        ChangeDocument(duplicate ? "Duplicate frame" : "Add frame", () =>
-        {
-            var frame = Document.Frames[ActiveFrame].Clone();
-            if (!duplicate) foreach (var cells in frame.Cells) Array.Clear(cells);
-            Document.Frames.Insert(++ActiveFrame, frame);
-        });
-    }
-
-    public void DeleteFrame()
-    {
-        if (Document.Frames.Count == 1) return;
-        ChangeDocument("Delete frame", () => { Document.Frames.RemoveAt(ActiveFrame); ActiveFrame = Math.Min(ActiveFrame, Document.Frames.Count - 1); });
-    }
-
-    public void SetFrameDuration(int duration)
-    {
-        if (duration is < HexDocument.MinimumFrameDuration or > HexDocument.MaximumFrameDuration)
-            throw new ArgumentOutOfRangeException(nameof(duration), duration, $"Duration must be between {HexDocument.MinimumFrameDuration} and {HexDocument.MaximumFrameDuration} milliseconds.");
-        if (Document.Frames[ActiveFrame].DurationMilliseconds != duration) ChangeDocument("Frame duration", () => Document.Frames[ActiveFrame].DurationMilliseconds = duration);
-    }
-
     private void ChangeDocument(string label, Action change)
     {
         EndStroke();
-        var before = new EditorState(Document.Clone(), ActiveLayer, ActiveFrame);
+        var before = new EditorState(Document.Clone(), ActiveLayer);
         change();
-        var after = new EditorState(Document.Clone(), ActiveLayer, ActiveFrame);
+        var after = new EditorState(Document.Clone(), ActiveLayer);
         Commit(label, new DocumentChange(before, after));
         Notify(EditorChange.All);
     }
@@ -346,28 +315,28 @@ public sealed class EditorSession
 
     private interface IChange { long Bytes { get; } void Apply(EditorSession session, bool forward); }
     private sealed record HistoryItem(string Label, IChange Change, long BeforeRevision, long AfterRevision);
-    private sealed record EditorState(HexDocument Document, int Layer, int Frame);
+    private sealed record EditorState(HexDocument Document, int Layer);
     private sealed record SelectionState(int[] Indices, HexCoordinate? Pivot);
     private SelectionState CaptureSelection() => new(Selection.ToArray(), selectionPivot);
     private readonly record struct PixelDelta(int Index, uint Before, uint After);
-    private sealed record PixelChange(int Frame, int Layer, PixelDelta[] Edits, SelectionState? BeforeSelection, SelectionState? AfterSelection) : IChange
+    private sealed record PixelChange(int Layer, PixelDelta[] Edits, SelectionState? BeforeSelection, SelectionState? AfterSelection) : IChange
     {
         public long Bytes => 12L * Edits.Length + 4L * ((BeforeSelection?.Indices.Length ?? 0) + (AfterSelection?.Indices.Length ?? 0));
         public void Apply(EditorSession session, bool forward)
         {
-            session.ActiveFrame = Frame; session.ActiveLayer = Layer;
-            foreach (var edit in Edits) session.Document.Frames[Frame].Cells[Layer][edit.Index] = forward ? edit.After : edit.Before;
+            session.ActiveLayer = Layer;
+            foreach (var edit in Edits) session.Document.Layers[Layer].Cells[edit.Index] = forward ? edit.After : edit.Before;
             var selection = forward ? AfterSelection : BeforeSelection;
             if (selection != null) { session.Selection.Clear(); session.Selection.UnionWith(selection.Indices); session.selectionPivot = selection.Pivot; }
         }
     }
     private sealed record DocumentChange(EditorState Before, EditorState After) : IChange
     {
-        public long Bytes => 4L * (Before.Document.CellCount * Before.Document.Layers.Count * Before.Document.Frames.Count + After.Document.CellCount * After.Document.Layers.Count * After.Document.Frames.Count);
+        public long Bytes => 4L * (Before.Document.CellCount * Before.Document.Layers.Count + After.Document.CellCount * After.Document.Layers.Count);
         public void Apply(EditorSession session, bool forward)
         {
             var state = forward ? After : Before;
-            session.Document = state.Document.Clone(); session.ActiveLayer = state.Layer; session.ActiveFrame = state.Frame;
+            session.Document = state.Document.Clone(); session.ActiveLayer = state.Layer;
             session.Selection.Clear(); session.selectionPivot = null;
         }
     }

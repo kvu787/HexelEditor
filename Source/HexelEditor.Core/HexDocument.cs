@@ -2,41 +2,26 @@ namespace HexelEditor.Core;
 
 public sealed class HexLayer
 {
+    public HexLayer(int cellCount) => Cells = new uint[cellCount];
     public string Name { get; set; } = "Layer";
     public bool Visible { get; set; } = true;
     public bool Locked { get; set; }
     public byte Opacity { get; set; } = 255;
-    public HexLayer Clone() => (HexLayer)MemberwiseClone();
-}
-
-public sealed class HexFrame
-{
-    public int DurationMilliseconds { get; set; } = 150;
-    public List<uint[]> Cells { get; } = [];
-    public HexFrame Clone()
-    {
-        var clone = new HexFrame { DurationMilliseconds = DurationMilliseconds };
-        clone.Cells.AddRange(Cells.Select(cells => (uint[])cells.Clone()));
-        return clone;
-    }
+    public uint[] Cells { get; private set; }
+    public HexLayer Clone() { var clone = (HexLayer)MemberwiseClone(); clone.Cells = (uint[])Cells.Clone(); return clone; }
 }
 
 public sealed class HexDocument
 {
     public const int MaximumDimension = 256;
     public const int MaximumLayers = 32;
-    public const int MaximumFrames = 128;
     public const int MaximumPaletteColors = 256;
-    public const int MinimumFrameDuration = 20;
-    public const int MaximumFrameDuration = 10_000;
-    public const long MaximumTotalCells = 16_777_216;
     public string Name { get; set; } = "Untitled";
     public int Width { get; }
     public int Height { get; }
     public HexOrientation Orientation { get; }
     public int CellCount => Width * Height;
     public List<HexLayer> Layers { get; } = [];
-    public List<HexFrame> Frames { get; } = [];
     public List<uint> Palette { get; } = [];
 
     public static readonly uint[] DefaultPalette =
@@ -57,10 +42,7 @@ public sealed class HexDocument
         Width = width;
         Height = height;
         Orientation = orientation;
-        Layers.Add(new HexLayer { Name = "Layer 1" });
-        var frame = new HexFrame();
-        frame.Cells.Add(new uint[CellCount]);
-        Frames.Add(frame);
+        Layers.Add(new HexLayer(CellCount) { Name = "Layer 1" });
         Palette.AddRange(DefaultPalette);
     }
 
@@ -72,18 +54,17 @@ public sealed class HexDocument
 
     public HexCoordinate CoordinateAt(int index) => HexGeometry.FromOffset(index % Width, index / Width, Orientation);
 
-    public uint CompositeAt(int index, int frameIndex)
+    public uint CompositeAt(int index)
     {
         uint result = 0;
-        for (var layer = 0; layer < Layers.Count; layer++)
-            if (Layers[layer].Visible) result = ColorMath.Over(Frames[frameIndex].Cells[layer][index], result, Layers[layer].Opacity);
+        foreach (var layer in Layers)
+            if (layer.Visible) result = ColorMath.Over(layer.Cells[index], result, layer.Opacity);
         return result;
     }
 
-    public void ValidateCapacity(int layers, int frames)
+    public void ValidateLayerCount(int layers)
     {
-        if (layers is < 1 or > MaximumLayers || frames is < 1 or > MaximumFrames || (long)CellCount * layers * frames > MaximumTotalCells)
-            throw new InvalidOperationException($"The document limit is {MaximumLayers} layers, {MaximumFrames} frames, and {MaximumTotalCells} total cells.");
+        if (layers is < 1 or > MaximumLayers) throw new InvalidOperationException($"The document limit is {MaximumLayers} layers.");
     }
 
     public HexDocument Clone()
@@ -91,8 +72,6 @@ public sealed class HexDocument
         var clone = new HexDocument(Width, Height, Orientation) { Name = Name };
         clone.Layers.Clear();
         clone.Layers.AddRange(Layers.Select(layer => layer.Clone()));
-        clone.Frames.Clear();
-        clone.Frames.AddRange(Frames.Select(frame => frame.Clone()));
         clone.Palette.Clear();
         clone.Palette.AddRange(Palette);
         return clone;
