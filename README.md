@@ -20,6 +20,7 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 - Rectangular selections, cell copying and pasting, movement, and exact 60-degree rotations. Transforms clip at the canvas boundary and can be undone.
 - Layers with names, visibility, locking, opacity, and ordering, each holding its own cells.
 - Editable color values (`#RRGGBB` or `#AARRGGBB`) and a project palette.
+- A solid canvas background under every cell, white on a new canvas and changeable at any time from the Color side bar section or View > Canvas background color. It is saved with the project and can be undone like any other edit.
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
 - Compressed `.hexel` projects and transparent PNG and SVG export.
 
@@ -47,7 +48,7 @@ The current release supports up to 32 layers, a 256 by 256 canvas, and 256 palet
 | Clear selected cells or layer       | Delete                                |
 | Deselect                            | Esc                                   |
 
-Export the artwork using the top-right Export PNG button. File also contains the SVG export. PNG uses a 16-pixel hexagon radius with transparency and no editor grid. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
+Export the artwork using the top-right Export PNG button. File also contains the SVG export. PNG uses a 16-pixel hexagon radius with transparency and no editor grid or canvas background; cells that hold no color stay transparent. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
 
 ## Build and verification
 
@@ -62,7 +63,7 @@ pwsh -File ./Scripts/Publish.ps1
 
 - Build compiles the complete solution in Release mode with warnings treated as errors.
 - Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that no background shows between neighboring opaque cells, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
