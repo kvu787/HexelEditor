@@ -170,15 +170,36 @@ public partial class MainWindow : Window
         BackgroundColorInput.Text = ColorMath.Format(color);
     }
 
+    // A swatch stretches to the width its grid column gives it and has no size of its own, so a UniformGrid
+    // would collapse every row. Keeping the swatches as tall as they are wide is what makes the grid square.
+    private double SwatchSide
+    {
+        get
+        {
+            var side = Math.Floor(PalettePanel.ActualWidth / HexDocument.PaletteColumns);
+            return side > 0 ? side : double.NaN;
+        }
+    }
+
+    private void PaletteResized(object sender, SizeChangedEventArgs args)
+    {
+        if (!args.WidthChanged) return;
+        var side = SwatchSide;
+        foreach (FrameworkElement swatch in PalettePanel.Children) swatch.Height = side;
+    }
+
     private void RefreshPalette()
     {
         PalettePanel.Children.Clear();
+        PalettePanel.Columns = HexDocument.PaletteColumns;
+        var side = SwatchSide;
         foreach (var color in session.Document.Palette)
         {
             var button = new Button
             {
                 Content = new Rectangle { Fill = BrushFor(color) },
                 Style = swatchStyle,
+                Height = side,
                 Tag = color == EditorCanvas.ForegroundColor ? "Active" : null,
                 ToolTip = ColorMath.Format(color)
             };

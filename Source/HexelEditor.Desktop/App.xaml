@@ -13,6 +13,8 @@
     <SolidColorBrush x:Key="Divider" Color="#E5E5E5" />
     <SolidColorBrush x:Key="Outline" Color="#CECECE" />
     <SolidColorBrush x:Key="Ink" Color="#3B3B3B" />
+    <!-- Translucent, so one edge reads the same on a pale swatch and a dark one. -->
+    <SolidColorBrush x:Key="SwatchEdge" Color="#30000000" />
     <SolidColorBrush x:Key="StrongInk" Color="#1F1F1F" />
     <SolidColorBrush x:Key="Muted" Color="#616161" />
     <SolidColorBrush x:Key="Accent" Color="#005FB8" />
@@ -163,28 +165,28 @@
       </Setter>
     </Style>
 
-    <!-- Palette swatch. The button background doubles as the selection ring. -->
+    <!-- Palette swatch. One cell of the 16 column palette grid, so it fills whatever width the cell gets
+         rather than carrying a size of its own. The button background doubles as the selection ring. -->
     <Style x:Key="SwatchButton" TargetType="Button">
-      <Setter Property="Width" Value="28" />
-      <Setter Property="Height" Value="28" />
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="Margin" Value="0,0,4,4" />
       <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="Ring" Background="{TemplateBinding Background}" CornerRadius="5" Padding="3"
+            <Border x:Name="Ring" Background="{TemplateBinding Background}" CornerRadius="3" Padding="2"
                     SnapsToDevicePixels="True">
-              <Border BorderBrush="{StaticResource Outline}" BorderThickness="1" CornerRadius="2">
+              <Border x:Name="Edge" BorderBrush="{StaticResource SwatchEdge}" BorderThickness="1">
                 <ContentPresenter />
               </Border>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Ring" Property="Background" Value="{StaticResource PressedSurface}" />
+                <Setter TargetName="Ring" Property="Background" Value="{StaticResource Ink}" />
+                <Setter TargetName="Edge" Property="BorderBrush" Value="{StaticResource Surface}" />
               </Trigger>
               <Trigger Property="Tag" Value="Active">
                 <Setter TargetName="Ring" Property="Background" Value="{StaticResource Accent}" />
+                <Setter TargetName="Edge" Property="BorderBrush" Value="{StaticResource Surface}" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
