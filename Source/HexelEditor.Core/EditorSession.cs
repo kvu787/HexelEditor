@@ -267,6 +267,7 @@ public sealed class EditorSession
     public void SetLayerVisible(int index, bool visible) { if (Document.Layers[index].Visible != visible) ChangeDocument("Layer visibility", () => Document.Layers[index].Visible = visible); }
     public void SetLayerLocked(int index, bool locked) { if (Document.Layers[index].Locked != locked) ChangeDocument("Layer lock", () => Document.Layers[index].Locked = locked); }
     public void SetLayerOpacity(byte opacity) { if (Document.Layers[ActiveLayer].Opacity != opacity) ChangeDocument("Layer opacity", () => Document.Layers[ActiveLayer].Opacity = opacity); }
+    public void SetBackgroundColor(uint color) { var opaque = color | 0xFF000000; if (Document.BackgroundColor != opaque) ChangeDocument("Background color", () => Document.BackgroundColor = opaque); }
     public bool AddPaletteColor(uint color)
     {
         if (Document.Palette.Contains(color) || Document.Palette.Count >= HexDocument.MaximumPaletteColors) return false;

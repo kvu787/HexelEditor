@@ -16,11 +16,22 @@ public sealed class HexDocument
     public const int MaximumDimension = 256;
     public const int MaximumLayers = 32;
     public const int MaximumPaletteColors = 256;
+    public const uint DefaultBackgroundColor = 0xFFFFFFFF;
+    private uint backgroundColor = DefaultBackgroundColor;
     public string Name { get; set; } = "Untitled";
     public int Width { get; }
     public int Height { get; }
     public HexOrientation Orientation { get; }
     public int CellCount => Width * Height;
+
+    // The canvas always sits on one opaque color, so a cell that holds nothing shows that color rather than
+    // whatever is behind the canvas. Alpha here would let the view behind it through and stop it being solid.
+    public uint BackgroundColor
+    {
+        get => backgroundColor;
+        set => backgroundColor = value | 0xFF000000;
+    }
+
     public List<HexLayer> Layers { get; } = [];
     public List<uint> Palette { get; } = [];
 
@@ -69,7 +80,7 @@ public sealed class HexDocument
 
     public HexDocument Clone()
     {
-        var clone = new HexDocument(Width, Height, Orientation) { Name = Name };
+        var clone = new HexDocument(Width, Height, Orientation) { Name = Name, BackgroundColor = BackgroundColor };
         clone.Layers.Clear();
         clone.Layers.AddRange(Layers.Select(layer => layer.Clone()));
         clone.Palette.Clear();

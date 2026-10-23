@@ -18,7 +18,7 @@ public static class ProjectFile
             using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
             {
-                var manifest = new Manifest(1, document.Name, document.Width, document.Height, document.Orientation,
+                var manifest = new Manifest(1, document.Name, document.Width, document.Height, document.Orientation, document.BackgroundColor,
                     document.Layers.Select(layer => new LayerMetadata(layer.Name, layer.Visible, layer.Locked, layer.Opacity)).ToArray(),
                     document.Palette.ToArray());
                 using (var stream = archive.CreateEntry("Document.json").Open()) JsonSerializer.Serialize(stream, manifest, Options);
@@ -60,7 +60,9 @@ public static class ProjectFile
             metadata.Palette.Length is < 1 or > HexDocument.MaximumPaletteColors ||
             metadata.Layers.Any(layer => layer == null || string.IsNullOrWhiteSpace(layer.Name) || layer.Name.Length > 256))
             throw new InvalidDataException("The project contains invalid layers or palette data.");
-        var document = new HexDocument(metadata.Width, metadata.Height, metadata.Orientation) { Name = metadata.Name };
+        // A manifest written before the canvas had a background color of its own leaves that canvas on the default white.
+        var document = new HexDocument(metadata.Width, metadata.Height, metadata.Orientation)
+        { Name = metadata.Name, BackgroundColor = metadata.BackgroundColor ?? HexDocument.DefaultBackgroundColor };
         document.Palette.Clear(); document.Palette.AddRange(metadata.Palette);
         document.Layers.Clear();
         for (var layerIndex = 0; layerIndex < metadata.Layers.Length; layerIndex++)
@@ -78,5 +80,5 @@ public static class ProjectFile
     }
 
     private sealed record LayerMetadata(string Name, bool Visible, bool Locked, byte Opacity);
-    private sealed record Manifest(int Format, string Name, int Width, int Height, HexOrientation Orientation, LayerMetadata[] Layers, uint[] Palette);
+    private sealed record Manifest(int Format, string Name, int Width, int Height, HexOrientation Orientation, uint? BackgroundColor, LayerMetadata[] Layers, uint[] Palette);
 }

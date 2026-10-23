@@ -53,13 +53,12 @@ public static class ArtworkRenderer
         return (float)Math.Sqrt(Math.Abs(matrix.ScaleX * matrix.ScaleY - matrix.SkewX * matrix.SkewY));
     }
 
-    public static void Draw(SKCanvas canvas, HexDocument document, bool paper = false, bool grid = false, float zoom = 1)
+    public static void Draw(SKCanvas canvas, HexDocument document, bool background = false, bool grid = false, float zoom = 1)
     {
         var visible = canvas.LocalClipBounds;
         using var cell = Hexagon(document.Orientation, CellRadius + Bleed(CanvasScale(canvas)));
         // Cells of one color also share a path, so that the fill covers them as the single shape they look like.
-        using var lightPaper = new SKPathBuilder { FillType = SKPathFillType.Winding };
-        using var darkPaper = new SKPathBuilder { FillType = SKPathFillType.Winding };
+        using var backgroundCells = new SKPathBuilder { FillType = SKPathFillType.Winding };
         var colors = new List<uint>();
         var groups = new Dictionary<uint, SKPathBuilder>();
         var seeThrough = false;
@@ -67,8 +66,8 @@ public static class ArtworkRenderer
         {
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
             if (!IsVisible(visible, x, y)) continue;
-            // Checkered paper marks the cells that hold no color, as a transparency checkerboard does.
-            if (paper) ((index % document.Width + index / document.Width) % 2 == 0 ? lightPaper : darkPaper).AddPath(cell, (float)x, (float)y);
+            // The background layer lies under every cell, so a cell that holds no color shows it instead.
+            if (background) backgroundCells.AddPath(cell, (float)x, (float)y);
             var color = document.CompositeAt(index);
             if ((color >> 24) == 0) continue;
             if (!groups.TryGetValue(color, out var group))
@@ -86,8 +85,8 @@ public static class ArtworkRenderer
             fill.Color = new SKColor(color);
             canvas.DrawPath(filled, fill);
         }
-        // All of the paper goes down first, so that no cell's overlap paints over the artwork of its neighbor.
-        if (paper) { FillCells(lightPaper, 0xFFFFFFFF); FillCells(darkPaper, 0xFFE9E9E9); }
+        // All of the background goes down first, so that no cell's overlap paints over the artwork of its neighbor.
+        if (background) FillCells(backgroundCells, document.BackgroundColor);
         // Cells one can see through would blend twice where they overlap and draw their own seam, a darker one.
         // Collecting them in a layer, where each cell replaces what it covers, leaves one cell's color per pixel.
         if (seeThrough) { canvas.SaveLayer(); fill.BlendMode = SKBlendMode.Src; }

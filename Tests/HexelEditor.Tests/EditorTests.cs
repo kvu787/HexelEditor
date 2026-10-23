@@ -271,18 +271,61 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public void ANewCanvasStartsOnOpaqueWhiteAndTheBackgroundStaysOpaque()
+    {
+        var session = new EditorSession(new HexDocument(3, 3));
+        Assert.Equal(0xFFFFFFFFu, session.Document.BackgroundColor);
+        session.SetBackgroundColor(0x40336699);
+        Assert.Equal(0xFF336699u, session.Document.BackgroundColor);
+        Assert.Equal("Background color", session.UndoLabel);
+        session.Undo();
+        Assert.Equal(0xFFFFFFFFu, session.Document.BackgroundColor);
+        session.Redo();
+        Assert.Equal(0xFF336699u, session.Document.BackgroundColor);
+        // Setting the color it already holds is not an edit, so it leaves nothing on the history.
+        session.MarkSaved();
+        session.SetBackgroundColor(0xFF336699);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void AManifestWithoutABackgroundColorLoadsOnWhite()
+    {
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + ".hexel");
+        try
+        {
+            var document = new HexDocument(2, 2) { BackgroundColor = 0xFF102030 };
+            ProjectFile.Save(document, path);
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Update))
+            {
+                var entry = archive.GetEntry("Document.json")!;
+                string manifest;
+                using (var reader = new StreamReader(entry.Open(), Encoding.UTF8)) manifest = reader.ReadToEnd();
+                var without = System.Text.RegularExpressions.Regex.Replace(manifest, @"\s*""BackgroundColor"": \d+,", "");
+                Assert.DoesNotContain("BackgroundColor", without);
+                entry.Delete();
+                using var writer = new StreamWriter(archive.CreateEntry("Document.json").Open(), Encoding.UTF8);
+                writer.Write(without);
+            }
+            Assert.Equal(HexDocument.DefaultBackgroundColor, ProjectFile.Load(path).BackgroundColor);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public void ArchiveRoundTripPreservesEveryLayerAndItsMetadata()
     {
         var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid() + ".hexel");
         try
         {
             var session = new EditorSession(new HexDocument(7, 9, HexOrientation.FlatTop) { Name = "Test scene" });
-            session.AddLayer(); session.SetLayerName("Highlights"); session.SetLayerOpacity(123);
+            session.AddLayer(); session.SetLayerName("Highlights"); session.SetLayerOpacity(123); session.SetBackgroundColor(0xFF2D4F1E);
             session.Paint(session.Document.CoordinateAt(20), 0x80223344); session.EndStroke(); session.AddPaletteColor(0xAABBCCDD);
             ProjectFile.Save(session.Document, path); var loaded = ProjectFile.Load(path);
             Assert.Equal(session.Document.Name, loaded.Name); Assert.Equal(HexOrientation.FlatTop, loaded.Orientation);
             Assert.Equal("Highlights", loaded.Layers[1].Name); Assert.Equal(123, loaded.Layers[1].Opacity);
             Assert.Equal(session.Document.Palette, loaded.Palette);
+            Assert.Equal(0xFF2D4F1Eu, loaded.BackgroundColor);
             for (var layer = 0; layer < 2; layer++) Assert.Equal(session.Document.Layers[layer].Cells, loaded.Layers[layer].Cells);
             // Saving over an existing file is also a complete atomic replacement.
             ProjectFile.Save(loaded, path); Assert.Equal(2, ProjectFile.Load(path).Layers.Count);
