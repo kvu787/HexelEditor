@@ -25,6 +25,9 @@ SCRIPT = os.environ.get(
 SHOT = os.environ.get("HEXGRID_SHOT", "")
 WIDTH = int(os.environ.get("HEXGRID_WIDTH", "70"))
 HEIGHT = int(os.environ.get("HEXGRID_HEIGHT", "40"))
+# The two generators put the same grid in the scene in different shapes, so what counts as
+# "every cell arrived" differs: one object each, or four polygons each on one object.
+SINGLE_MESH = os.environ.get("HEXGRID_SINGLE_MESH", "0") != "0"
 
 failures = []
 
@@ -67,7 +70,13 @@ def step_run():
     check("Run Script finishes without an error", result == {"FINISHED"}, str(result))
     grid = bpy.data.collections.get("HexGrid")
     check("the grid collection appears in the scene", grid is not None)
-    if grid:
+    if grid and SINGLE_MESH:
+        check("the grid is a single object", len(grid.objects) == 1,
+              "got {0}".format(len(grid.objects)))
+        polygons = len(grid.objects[0].data.polygons) if len(grid.objects) == 1 else 0
+        check("every cell is there", polygons == WIDTH * HEIGHT * 4,
+              "{0} polygons of {1}".format(polygons, WIDTH * HEIGHT * 4))
+    elif grid:
         check("every cell is there", len(grid.objects) == WIDTH * HEIGHT,
               "{0} of {1}".format(len(grid.objects), WIDTH * HEIGHT))
         # The factory startup scene is left as it was found, which is the whole point of the

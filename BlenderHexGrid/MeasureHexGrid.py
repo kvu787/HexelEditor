@@ -17,7 +17,9 @@ import time
 
 import bpy
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "GenerateHexGrid.py")
+SCRIPT = os.environ.get(
+    "HEXGRID_SCRIPT",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "GenerateHexGrid.py"))
 
 
 def peak_memory_gb():
@@ -51,11 +53,14 @@ def main():
 
     with open(SCRIPT, "r", encoding="utf-8") as stream:
         source = stream.read()
+    # WIDTH, HEIGHT and ADD_CAMERA exist in both generators; the rest belong to one or the other,
+    # so a setting the chosen script does not have is skipped rather than treated as an error.
+    required = {"WIDTH", "HEIGHT", "ADD_CAMERA"}
     for key, value in (("WIDTH", width), ("HEIGHT", height), ("SHARE_MESHES", share),
                        ("ADD_CAMERA", False), ("PROGRESS_ROWS", 0)):
         source, count = re.subn(r"^{0} = [^\n#]+".format(key), "{0} = {1!r}".format(key, value),
                                 source, count=1, flags=re.MULTILINE)
-        if count != 1:
+        if count != 1 and key in required:
             raise AssertionError("could not find a setting named {0}".format(key))
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -65,11 +70,13 @@ def main():
 
     cells = width * height
     print("HEXGRID_MEASUREMENT " + json.dumps({
+        "script": os.path.basename(SCRIPT),
         "width": width,
         "height": height,
         "cells": cells,
         "shareMeshes": share,
         "objects": len(bpy.data.objects),
+        "polygons": sum(len(mesh.polygons) for mesh in bpy.data.meshes),
         "seconds": round(elapsed, 3),
         "microsecondsPerCell": round(elapsed / cells * 1e6, 2),
         "peakMemoryGb": round(peak_memory_gb(), 3),
