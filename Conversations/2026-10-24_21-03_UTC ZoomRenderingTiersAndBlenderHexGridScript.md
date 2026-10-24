@@ -241,3 +241,60 @@ and a re-implementation would still be caught.
 Two test bugs were found and fixed along the way: a 1e-6 distance tolerance that single-precision
 object locations cannot meet at coordinates near 60, and a spatial bucket sized exactly at the
 search radius, which dropped neighbours for every cell whose coordinate landed on a bucket edge.
+
+## User
+
+okay, the hex cells don't have to be one object per cell. create/test/validate a separate approach that uses one mesh object to contain all the hex cells.
+
+## User (mid-turn)
+
+also, create a demo .blend file that has a 2000x1000 hex grid created from your script
+
+## Assistant
+
+Added `BlenderHexGrid/GenerateHexGridSingleMesh.py` beside the per-object script, plus its own
+tests, a demo-file writer and a verifier.
+
+### What changed
+
+Same geometry -- flat-top hexagons, four triangles fanned from corner 0, same positions, same
+`(q + 2r) mod k` colouring -- but all of it in one mesh object. A cell's colour is carried by the
+`material_index` of its four polygons rather than by an object's material slot. A test builds the
+same grid through both scripts and checks they agree cell for cell.
+
+The mesh is filled with `add()` and `foreach_set()` from numpy buffers rather than `from_pydata`,
+which would need Python lists of twelve million coordinate tuples. Cells are laid out row by row,
+so cell `(column, row)` owns vertices `6n` to `6n+5` and polygons `4n` to `4n+3` for
+`n = row * WIDTH + column`.
+
+### Measured at two million cells
+
+| | One object per cell | Single mesh |
+| ------ | --------- | --------- |
+| Build  | 89.3 s    | 8.3 s     |
+| Memory | 6.19 GB   | 2.04 GB   |
+| Each   | 45 us     | 4.2 us    |
+
+The per-object cost was Blender's per-object overhead rather than the geometry. What the single
+mesh gives up is selecting, moving, hiding or animating a cell on its own in Object Mode.
+
+### The demo file
+
+`MakeDemo.ps1` writes `Output/HexGrid2000x1000.blend`: two million cells, twelve million
+vertices, eight million polygons, seven material slots. Builds in 9.5 s, saves in 0.4 s, reopens
+in 0.7 s, 193 MB compressed. `Output` is gitignored -- far too large for the repository, and it
+rebuilds from the script in seconds.
+
+It is then opened again and checked, because saving and re-opening is where a mesh filled through
+`foreach_set` would show damage. The adjacency check is exhaustive rather than sampled: all six
+directions for all two million cells.
+
+### Validation
+
+41 + 44 automated checks pass, plus both scripts driven through a real Blender window's Text
+Editor on NE18NZ2. The saved demo file was opened in a real window and screenshotted at three
+zoom levels.
+
+Worth knowing: zoomed all the way out the grid looks grey, and that is correct. Two thousand
+columns across a thousand-pixel viewport is half a pixel per cell, so seven saturated hues
+average to a neutral. Zoomed in, the colours are there and no two neighbours match.
