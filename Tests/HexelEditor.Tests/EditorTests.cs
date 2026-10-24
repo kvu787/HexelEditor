@@ -258,6 +258,102 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public void StructuralUndoRestoresWhatItChangedWithoutLosingCells()
+    {
+        var session = new EditorSession(new HexDocument(8, 8));
+        var cell = HexGeometry.FromOffset(3, 4, HexOrientation.PointyTop);
+        var index = session.Document.IndexOf(cell);
+        session.Paint(cell, 0xFF112233);
+        session.EndStroke();
+
+        session.SetBackgroundColor(0xFF445566);
+        session.AddLayer();
+        session.SetLayerName("Second");
+        session.SetLayerOpacity(128);
+        session.SetLayerVisible(0, false);
+        Assert.Equal(2, session.Document.Layers.Count);
+
+        session.Undo();
+        Assert.True(session.Document.Layers[0].Visible);
+        session.Undo();
+        Assert.Equal(255, session.Document.Layers[1].Opacity);
+        session.Undo();
+        Assert.NotEqual("Second", session.Document.Layers[1].Name);
+        session.Undo();
+        Assert.Single(session.Document.Layers);
+        session.Undo();
+        Assert.Equal(HexDocument.DefaultBackgroundColor, session.Document.BackgroundColor);
+
+        // The cells were shared rather than copied by every one of those records, and are still here.
+        Assert.Equal(0xFF112233u, session.Document.Layers[0].Cells[index]);
+        session.Undo();
+        Assert.Equal(0u, session.Document.Layers[0].Cells[index]);
+    }
+
+    [Fact]
+    public void PaintingBetweenStructuralChangesUndoesInOrder()
+    {
+        // The case sharing cells depends on: a structural record holds the same arrays the painting after it
+        // goes on writing to, and is only ever reached once that painting has been undone.
+        var session = new EditorSession(new HexDocument(8, 8));
+        var cell = HexGeometry.FromOffset(2, 2, HexOrientation.PointyTop);
+        var index = session.Document.IndexOf(cell);
+
+        session.AddLayer();
+        session.Paint(cell, 0xFFAABBCC);
+        session.EndStroke();
+        Assert.Equal(0xFFAABBCCu, session.Document.Layers[1].Cells[index]);
+
+        session.Undo();
+        Assert.Equal(0u, session.Document.Layers[1].Cells[index]);
+        session.Undo();
+        Assert.Single(session.Document.Layers);
+
+        session.Redo();
+        Assert.Equal(2, session.Document.Layers.Count);
+        session.Redo();
+        Assert.Equal(0xFFAABBCCu, session.Document.Layers[1].Cells[index]);
+    }
+
+    [Fact]
+    public void DeletingALayerKeepsItsCellsForUndo()
+    {
+        var session = new EditorSession(new HexDocument(8, 8));
+        session.AddLayer();
+        var cell = HexGeometry.FromOffset(1, 1, HexOrientation.PointyTop);
+        var index = session.Document.IndexOf(cell);
+        session.Paint(cell, 0xFF778899);
+        session.EndStroke();
+        session.DeleteLayer();
+        Assert.Single(session.Document.Layers);
+        session.Undo();
+        Assert.Equal(2, session.Document.Layers.Count);
+        Assert.Equal(0xFF778899u, session.Document.Layers[1].Cells[index]);
+    }
+
+    [Fact]
+    public void StructuralChangesOnALargeCanvasDoNotCrowdOutHistory()
+    {
+        // Recording a structural change used to copy every cell twice, so on a large canvas one entry ran to
+        // tens of megabytes and the history budget held only a handful. Ten should all still be there.
+        var session = new EditorSession(new HexDocument(2000, 1000));
+        var colors = new uint[10];
+        for (var change = 0; change < colors.Length; change++)
+        {
+            colors[change] = 0xFF000000u | (uint)(0x010203 * (change + 1));
+            session.SetBackgroundColor(colors[change]);
+        }
+        Assert.Equal(colors[^1], session.Document.BackgroundColor);
+        for (var change = colors.Length - 1; change > 0; change--)
+        {
+            session.Undo();
+            Assert.Equal(colors[change - 1], session.Document.BackgroundColor);
+        }
+        session.Undo();
+        Assert.Equal(HexDocument.DefaultBackgroundColor, session.Document.BackgroundColor);
+    }
+
+    [Fact]
     public void ACanvasOfTwoThousandByOneThousandIsAllowedAndOneTooLargeIsNot()
     {
         var document = new HexDocument(2000, 1000);

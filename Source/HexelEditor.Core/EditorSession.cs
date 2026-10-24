@@ -325,9 +325,9 @@ public sealed class EditorSession
     private void ChangeDocument(string label, Action change)
     {
         EndStroke();
-        var before = new EditorState(Document.Clone(), ActiveLayer);
+        var before = new EditorState(Document.CloneStructure(), ActiveLayer);
         change();
-        var after = new EditorState(Document.Clone(), ActiveLayer);
+        var after = new EditorState(Document.CloneStructure(), ActiveLayer);
         Commit(label, new DocumentChange(before, after));
         Notify(EditorChange.All);
     }
@@ -384,12 +384,20 @@ public sealed class EditorSession
     }
     private sealed record DocumentChange(EditorState Before, EditorState After) : IChange
     {
-        public long Bytes => 4L * (Before.Document.CellCount * Before.Document.Layers.Count + After.Document.CellCount * After.Document.Layers.Count);
+        // Structure only: a layer's properties and the palette. The cells are shared, not copied, so they are
+        // not this record's to account for.
+        public long Bytes => StructureBytes(Before) + StructureBytes(After);
+
+        private static long StructureBytes(EditorState state) =>
+            128L + 64L * state.Document.Layers.Count + 4L * state.Document.Palette.Count;
+
         public void Apply(EditorSession session, bool forward)
         {
             var state = forward ? After : Before;
-            session.Document = state.Document.Clone(); session.ActiveLayer = state.Layer;
+            session.Document = state.Document.CloneStructure(); session.ActiveLayer = state.Layer;
             session.Selection.Clear(); session.selectionPivot = null;
+            // The cells are the same arrays, but which layers there are, and how they look, is not.
+            session.MarkAllCellsDirty();
         }
     }
 }

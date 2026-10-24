@@ -9,6 +9,11 @@ public sealed class HexLayer
     public byte Opacity { get; set; } = 255;
     public uint[] Cells { get; private set; }
     public HexLayer Clone() { var clone = (HexLayer)MemberwiseClone(); clone.Cells = (uint[])Cells.Clone(); return clone; }
+
+    // A copy of everything about the layer except its cells, which the copy shares. For recording a change
+    // that cannot touch cell contents: the properties are copied so that changing one afterwards does not
+    // reach into the record, while the cells, which are what cost, are not copied at all.
+    public HexLayer CloneSharingCells() => (HexLayer)MemberwiseClone();
 }
 
 public sealed class HexDocument
@@ -67,6 +72,13 @@ public sealed class HexDocument
     ];
 
     public HexDocument(int width, int height, HexOrientation orientation = HexOrientation.PointyTop)
+        : this(width, height, orientation, withFirstLayer: true)
+    {
+    }
+
+    // A copy supplies its own layers and palette, so it asks for neither. The first layer is a cell array the
+    // size of the canvas, which on a large one is megabytes allocated and zeroed only to be thrown away.
+    private HexDocument(int width, int height, HexOrientation orientation, bool withFirstLayer)
     {
         if (width is < 1 or > MaximumDimension)
             throw new ArgumentOutOfRangeException(nameof(width), width, $"Canvas width must be between 1 and {MaximumDimension}.");
@@ -78,6 +90,7 @@ public sealed class HexDocument
         Width = width;
         Height = height;
         Orientation = orientation;
+        if (!withFirstLayer) return;
         Layers.Add(new HexLayer(CellCount) { Name = "Layer 1" });
         Palette.AddRange(DefaultPalette);
     }
@@ -110,12 +123,24 @@ public sealed class HexDocument
     public int MaximumLayersForThisCanvas =>
         (int)Math.Clamp(MaximumCellBytes / ((long)CellCount * sizeof(uint)), 1, MaximumLayers);
 
-    public HexDocument Clone()
+    public HexDocument Clone() => CopyWith(layer => layer.Clone());
+
+    // The document's structure with its cells shared rather than copied: the layer list and its order, each
+    // layer's name, visibility, lock and opacity, the palette, the background and the name.
+    //
+    // This is what a structural change records. Adding a palette colour or hiding a layer cannot alter a
+    // cell, so copying two million of them twice to record it was work for nothing. It also made the history
+    // budget meaningless on a large canvas: at 16 MB an entry, 64 MiB held four of them.
+    //
+    // Sharing is safe because history is undone in order. Reaching a structural record means every pixel
+    // change made after it has already been undone, so the cells the record shares hold what they held when
+    // it was made.
+    public HexDocument CloneStructure() => CopyWith(layer => layer.CloneSharingCells());
+
+    private HexDocument CopyWith(Func<HexLayer, HexLayer> copyLayer)
     {
-        var clone = new HexDocument(Width, Height, Orientation) { Name = Name, BackgroundColor = BackgroundColor };
-        clone.Layers.Clear();
-        clone.Layers.AddRange(Layers.Select(layer => layer.Clone()));
-        clone.Palette.Clear();
+        var clone = new HexDocument(Width, Height, Orientation, withFirstLayer: false) { Name = Name, BackgroundColor = BackgroundColor };
+        clone.Layers.AddRange(Layers.Select(copyLayer));
         clone.Palette.AddRange(Palette);
         return clone;
     }
