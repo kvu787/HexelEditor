@@ -259,3 +259,32 @@ Not measured: that the shipped editor still answers shortcuts when the window it
 ### Still open
 
 Screenshots are still not compared against committed baselines, which remains the one gap where a regression would need a person to notice it.
+
+## User
+
+does this app use the gpu at all?
+
+## Assistant
+
+Yes, but not for the artwork. Checked by reading what the code references and then by listing the modules the running editor actually loads, which settles it rather than inferring it.
+
+| Layer                                  | Where it runs | Evidence                                                              |
+| -------------------------------------- | ------------- | --------------------------------------------------------------------- |
+| Drawing the hexagons                   | CPU           | `HexCanvas : SKElement`, Skia's software raster; `libSkiaSharp.dll`    |
+| Compositing the window and its chrome  | GPU           | `wpfgfx_cor3.dll` with `d3d9.dll`, `d3d11.dll`, `dxgi.dll`, `dxcore.dll` |
+| The display driver actually in use     | GPU           | Intel `igd*`, `igc64.dll`, and NVIDIA `nvd3dumx.dll`, `nvldumdx.dll`  |
+| OpenGL or Vulkan                       | neither       | none loaded                                                           |
+| PNG and SVG export                     | CPU           | Skia surfaces, no presentation source involved                        |
+| `RenderTargetBitmap` during validation | CPU           | WPF's software rasterizer                                             |
+
+So Skia rasterizes every cell into a memory bitmap on the processor, and WPF hands that bitmap to Direct3D as a texture along with the menus, side bar and text. The artwork is drawn on the CPU; everything that puts it on screen is on the GPU. Nothing sets `RenderOptions.ProcessRenderMode`, so WPF's hardware acceleration is simply on by default, which the loaded Direct3D modules confirm.
+
+`SkiaSharp.Views.WPF` does offer a GPU-backed element, `SKGLElement`, and this editor does not use it.
+
+### Two things worth knowing from this
+
+**5 MB of the build is never used.** `SkiaSharp.Views.WPF` drags in OpenTK and GLFW as transitive dependencies, for the `SKGLElement` path. Ten files, 5.0 MB, ship in the output, and the probe confirms not one of them is ever loaded: OpenGL, Vulkan and OpenTK are all absent from the running process. They could be trimmed from the published application.
+
+**It explains why the validation harness works at all.** The checks render through `RenderTargetBitmap` and Skia, both on the CPU, which is why they work on a desktop that is not being displayed and while the machine is locked, and why a virtual machine would be a faithful place to run this. The GPU only matters in the WPF layer, which is also why photographing the window needs `PrintWindow` with `PW_RENDERFULLCONTENT`: the content being captured is composited by Direct3D rather than drawn with GDI.
+
+The probe ran on the validation display under the usual watch, which reported no violations.
