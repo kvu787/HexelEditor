@@ -288,3 +288,49 @@ So Skia rasterizes every cell into a memory bitmap on the processor, and WPF han
 **It explains why the validation harness works at all.** The checks render through `RenderTargetBitmap` and Skia, both on the CPU, which is why they work on a desktop that is not being displayed and while the machine is locked, and why a virtual machine would be a faithful place to run this. The GPU only matters in the WPF layer, which is also why photographing the window needs `PrintWindow` with `PW_RENDERFULLCONTENT`: the content being captured is composited by Direct3D rather than drawn with GDI.
 
 The probe ran on the validation display under the usual watch, which reported no violations.
+
+## User
+
+the next major pain point we need to fix is that the application is usable but noticeable laggy when the canvas size is large. i created the max canvas size of 256x256, and the lag is noticeable. ideally, the app should be able to handle a canvas size of at least 2000x1000 WxH without any lag. is this feasible?
+
+## Assistant
+
+Feasible for editing, not for exporting at that size. Measured rather than guessed, by timing `ArtworkRenderer.Draw` against real documents at the sizes the build allows.
+
+### What the numbers say
+
+Each cell is drawn as its own antialiased hexagon path, and `Draw` loops over every cell in the document, testing visibility inside the loop. Timing it at three sizes and four zooms separates the two costs that result. The last column parks the artwork off screen, so the loop and its visibility test are the only work done.
+
+| Canvas    | Cells  | Fit zoom  | Zoom 1.0 | Zoom 8.0 | Off screen (loop only) |
+| --------- | ------ | --------- | -------- | -------- | ---------------------- |
+| 64 x 64   | 4,096  | 14.22 ms  | 5.36 ms  | 0.71 ms  | 0.10 ms                |
+| 128 x 128 | 16,384 | 34.27 ms  | 5.72 ms  | 1.02 ms  | 0.16 ms                |
+| 256 x 256 | 65,536 | 101.50 ms | 5.81 ms  | 0.92 ms  | 0.41 ms                |
+
+Three things fall out of that:
+
+**The lag at 256 x 256 is the fit-zoom column.** 101 ms a frame is about 10 frames a second, which is exactly "usable but noticeably laggy". It grows with the cell count because fitting the canvas to the window means every cell is on screen and every cell is rasterized as its own path, at roughly 1.5 microseconds each.
+
+**Editing while zoomed in is already size-independent.** The zoom 1.0 column is flat at about 5.8 ms whatever the canvas size, because the number of cells on screen is bounded by the window, not by the document.
+
+**The loop itself is cheap now and will not be at 2000 x 1000.** About 6 nanoseconds a cell: 0.41 ms at 65,536 cells, but 2,000,000 cells is 12 ms a frame before anything is drawn, and double that with the grid on, which loops a second time. That is most of a 60 frames-a-second budget spent deciding what not to draw.
+
+I had assumed before measuring that this loop was the whole story. It is not: at today's sizes it is a rounding error and the rasterizing dominates. Both need fixing, for different reasons.
+
+Extrapolating the fit-zoom column to 2,000,000 cells gives roughly 3 seconds a frame. That is the real obstacle, and it is not something to optimize a constant factor out of.
+
+### What would make it work
+
+- **Range culling.** Work out the visible column and row span from the viewport and iterate only those, instead of iterating everything and asking each cell whether it is visible. Removes the 12 to 24 ms floor.
+- **Level of detail.** Once a cell is smaller than a pixel or two, drawing it as an antialiased path is wasted: a 2,000,000 cell canvas fitted to a window puts about 2,000,000 hexagons into under a million pixels. Below that zoom, draw from a cached bitmap holding one pixel per cell and let Skia scale it. This is what turns 3 seconds into a blit, and it is the change that actually decides the answer.
+- **Cache the raster and redraw only what changed.** Pan, zoom and the cursor ring currently repay the full cost every frame. With the artwork cached and the cursor and selection drawn over it, a stroke costs only the cells it touches.
+- **A different selection.** `SelectAll` builds a `HashSet<int>` of every index, which at 2,000,000 cells is tens of megabytes and slow, and the canvas iterates the whole selection every frame to highlight it. Wants a flag or a bitmap plus the same culling.
+- **Raise the cap.** `MaximumDimension` is 256, and the project loader has limits of its own.
+
+Memory is not the obstacle: a layer is 4 bytes a cell, so 8 MB at 2000 x 1000, and undo records the cells an edit touched rather than snapshots, inside a 64 MiB budget. Thirty-two layers of that is 256 MB, which is the one number worth revisiting.
+
+### What will not work at that size
+
+Export. The PNG path renders at a 16 pixel cell radius, which at 2000 x 1000 is about 58,890 x 25,000 pixels, or 1.5 billion. The existing guard already refuses anything over 32,768 a side or 64 million pixels, and rightly. SVG is worse: one polygon per cell is 2,000,000 elements and hundreds of megabytes of text. Exporting a canvas that size needs a chosen scale, or tiles, and the full-resolution single-image export has to go.
+
+So: yes to editing a 2000 x 1000 canvas smoothly, with the renderer changed to spend time per visible pixel rather than per cell in the document. No to exporting one as a single image.
