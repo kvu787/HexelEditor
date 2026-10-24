@@ -21,6 +21,13 @@ public partial class App : Application
     {
         var arguments = Environment.GetCommandLineArgs();
         verifying = arguments.Length == 3 && arguments[1] == "--verify-output";
+        if (verifying || Array.IndexOf(arguments, ShowWithoutFocusOption) >= 0)
+        {
+            // A crash would otherwise put a Windows Error Reporting window on whichever display Windows
+            // likes, which for a run meant to be invisible is the worst kind of interruption. Failing
+            // silently is right here: the session log and the exit code carry the diagnosis.
+            SetErrorMode(FailCriticalErrors | NoGeneralProtectionFaultErrorBox | NoOpenFileErrorBox);
+        }
         Log = new SessionLog(verifying ? Path.GetFullPath(arguments[2]) : null);
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         DispatcherUnhandledException += (_, args) =>
@@ -85,6 +92,9 @@ public partial class App : Application
             // whoever is using the machine. Together these let a validation run share a desk with its user.
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.ShowActivated = false;
+            // No taskbar button means nothing to appear on the user's taskbar, and nothing to flash there if
+            // the window is ever denied the foreground, which is how Windows answers a refused activation.
+            window.ShowInTaskbar = false;
             KeepFocusAway = true;
             window.SourceInitialized += (_, _) => Place(window, placement);
         }
@@ -120,6 +130,7 @@ public partial class App : Application
     private const uint NoZOrder = 0x0004, NoActivate = 0x0010, NoOwnerZOrder = 0x0200;
     private const int ExtendedStyle = -20;
     private static readonly IntPtr NoActivateStyle = 0x08000000;
+    private const uint FailCriticalErrors = 0x0001, NoGeneralProtectionFaultErrorBox = 0x0002, NoOpenFileErrorBox = 0x8000;
 
     // The generated LibraryImport marshaller needs unsafe code switched on for the whole project, which is a
     // poor trade for one call made once per launch.
@@ -133,5 +144,8 @@ public partial class App : Application
 
     [DllImport("user32.dll")]
     private static extern IntPtr SetWindowLongPtrW(IntPtr handle, int index, IntPtr value);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint SetErrorMode(uint mode);
 #pragma warning restore SYSLIB1054
 }

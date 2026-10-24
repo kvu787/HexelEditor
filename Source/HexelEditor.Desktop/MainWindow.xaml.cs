@@ -578,23 +578,45 @@ public partial class MainWindow : Window
 
     public void VerifyInterface(string folder)
     {
-        VerifyMenu();
+        var submenuPath = VerifyMenu();
         VerifyDialogs();
-        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"), "Menu bar and dialogs: passed\n");
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"Menu bar and dialogs: passed, submenu opened {submenuPath}\n");
     }
 
-    private void VerifyMenu()
+    // Returns how the submenu was opened. A WPF menu captures the mouse so it can tell when to close itself,
+    // and only a window on the input desktop can hold capture, so in a locked session the menu item refuses
+    // to keep its submenu open. Opening the popup directly asks for no capture, which still builds, lays out
+    // and measures the submenu. Which path was taken belongs in the report rather than being swallowed: the
+    // fallback is expected while the session is locked and a defect while it is not, and only the caller
+    // knows which of those it is looking at.
+    private string VerifyMenu()
     {
         FileMenu.ApplyTemplate();
         // A menu item refuses to open its submenu before it has been loaded, so let pending Loaded events run first.
         Dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
+        if (FileMenu.Template.FindName("Submenu", FileMenu) is not Popup popup)
+            throw new InvalidOperationException("The File menu has no submenu to open.");
         FileMenu.IsSubmenuOpen = true;
         UpdateLayout();
-        if (FileMenu.Template.FindName("Submenu", FileMenu) is not Popup { IsOpen: true, Child: FrameworkElement submenu })
+        var submenuPath = "through the menu item";
+        var staysOpen = popup.StaysOpen;
+        if (!popup.IsOpen)
+        {
+            popup.StaysOpen = true;
+            popup.IsOpen = true;
+            UpdateLayout();
+            submenuPath = "directly, with no mouse capture";
+        }
+        if (!popup.IsOpen || popup.Child is not FrameworkElement submenu)
             throw new InvalidOperationException("The File menu did not open.");
         submenu.UpdateLayout();
         if (submenu.ActualWidth < 120 || submenu.ActualHeight < 120) throw new InvalidOperationException("The File menu rendered empty.");
+        popup.IsOpen = false;
+        // Restored only once the popup is closed, because a popup that is open when StaysOpen goes back to
+        // false immediately reaches for the capture it was opened without.
+        popup.StaysOpen = staysOpen;
         FileMenu.IsSubmenuOpen = false;
+        return submenuPath;
     }
 
     // The dialogs build their visual tree in code from the application's styles, so measuring one proves those styles apply.
