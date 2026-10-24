@@ -394,3 +394,61 @@ That is the right GPU design, and it is strictly better than the mesh. It is als
 Do the three tiers on the processor. It is measured sufficient for 2000 x 1000 at about 1.4 ms a frame, it keeps the verification that currently works, and it depends on nothing new.
 
 Keep the shader in reserve for when the target is much larger canvases, or per-cell effects and animation, where cost per pixel rather than per cell starts to matter for its own sake. If that day comes, write the fragment shader, not the mesh.
+
+## User
+
+okay, let's take a step back. i want to be able to edit without any noticeable lag with an upper limit canvas size of roughly 2000x1000. accomplish this end-to-end as you see fit.
+
+## Assistant
+
+Done. A 2000 by 1000 canvas edits at between 5 and 19 ms a frame, against about three seconds before.
+
+### What was wrong
+
+Two separate things, and only measuring separated them.
+
+Every frame walked every cell and asked each whether it was on screen, twice over with the grid on. At 65,536 cells that is a rounding error. At 2,000,000 it is 12 to 24 ms before anything is drawn at all.
+
+Then the drawing itself. A cell was drawn as its own antialiased path, which costs about the same whether it covers two hundred pixels or a fifth of one. Fitting a large canvas to a window puts every cell on screen at once, so that cost was paid two million times for a result under a million pixels.
+
+### What it is now
+
+The visible span of columns and rows comes from inverting the layout, so a frame costs what the window shows rather than what the document holds. And how a cell is drawn follows how large it is on screen:
+
+| Cell on screen   | Drawn as                              | Why                                                               |
+| ---------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| 14 pixels and up | its exact antialiased outline         | few enough to afford, large enough for the shape to be seen         |
+| 7 to 14 pixels   | four triangles, batched into one call | no path building, and cells meet exactly so there is no seam        |
+| 3 to 7 pixels    | two triangles                         | triangle setup is the cost, and the corners cannot be seen anyway   |
+| under 3 pixels   | one scaled blit of the artwork raster | the shape is sub-pixel, so only the colour and its place matter     |
+
+The raster holds the composited artwork at two pixels a cell, and only cells reported dirty are recomposited, so a stroke costs the cells it touched: 0.11 ms, against 10 ms to build the whole thing. Two pixels rather than one because alternate rows sit half a cell across, and at one pixel that offset cannot be stored, so the rows would be drawn in the wrong places.
+
+Your mesh instinct turned out to be right for the middle of that table and wrong at the bottom, for the reason I gave last time: triangle setup costs the same whatever the triangle's size. Going from four triangles a cell to two in the 3-to-7 pixel band took the worst frame from 30 ms to 17 ms, which is that effect measured rather than argued.
+
+### Measured, 990 by 812 window
+
+| Canvas      | Cells     | Fitted to the window     | At zoom 1.0              |
+| ----------- | --------- | ------------------------ | ------------------------ |
+| 256 x 256   | 65,536    | 101.50 ms -> 20.87 ms    | 5.81 ms -> 6.14 ms       |
+| 2000 x 1000 | 2,000,000 | about 3 s -> 6.71 ms     | about 18-30 ms -> 4.81 ms |
+
+Across every zoom at 2000 by 1000 the slowest frame is 18.84 ms, where cells are 3 to 8 pixels and tens of thousands are on screen. Everything else is 5 to 12 ms.
+
+### Everything else that had to move
+
+- The limit was 256 a side. It is now 2048, bounded by a cell count of 2,200,000 and a 256 MB budget for cell data, because the cost is the cell count rather than either side.
+- Editing reports the smallest rectangle of cells that changed, including undo and redo, which put cells back without going through the painting path.
+- Selecting everything built its set through a LINQ range; compositing a cell went through floating point even when the cell was empty or its layer opaque.
+- The selection highlight walked every selected cell each frame to draw the few on screen, which after Ctrl+A is two million. So did the rectangle preview.
+- PNG export no longer refuses a large canvas. At sixteen pixels a cell, 2000 by 1000 would be 59,000 by 25,000 pixels, so the scale drops to whatever fits in 64 million. Export still draws exact outlines and takes as long as it takes, which you said was fine.
+
+### Checked
+
+Save and load of a real 2000 by 1000 project: 264 ms and 126 ms, round trip exact. Opened on the validation display and looked at: bands, diagonal, placement and aspect all correct, header reading 2000 x 1000 hexels. 58 unit tests pass. Full validation passes with the watch reporting nothing on a user display and no focus taken.
+
+Verification now also draws a canvas at each level of detail and checks that a cell's colour lands where that cell is, since the raster has its own coordinate mapping and the mesh its own corner arithmetic. It earned itself immediately: it caught the mesh drawing every cell black, because Skia blends vertex colours against the paint and a default paint is black. Without that check the benchmarks would have looked fine and the editor would have drawn a black canvas.
+
+### Known and left alone
+
+Structural changes - a palette colour, a layer toggle, the background - clone the whole document twice to record undo. At two million cells that is tens of megabytes a time, so those actions will hitch on a large canvas even though painting does not. It is a different piece of work from this one, and painting was what you asked about.
