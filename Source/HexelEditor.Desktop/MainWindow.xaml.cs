@@ -5,6 +5,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
@@ -675,6 +676,90 @@ public partial class MainWindow : Window
         if (session.IsDirty) throw new InvalidOperationException("The pointer checks left the document unsaved.");
         File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
             $"Pointer input: hit testing, mouse capture, a {line.Length}-cell drag, right-button erase and middle-button pan verified through real window messages\n");
+    }
+
+    // The shortcut table, struck rather than called. Keys are injected, so Control and Shift are really held
+    // and OnKeyDown reads the modifier state it would read under a hand. Nothing here opens a dialog or
+    // touches the clipboard: Ctrl+N, Ctrl+O and Ctrl+S would wait on a modal window that no one can answer,
+    // and the clipboard belongs to the window station, which is shared with whoever is using the machine.
+    public void VerifyKeyboardInput(string folder)
+    {
+        AttachSession(new EditorSession(new HexDocument(40, 32)));
+        UpdateLayout();
+        EditorCanvas.Fit();
+        UpdateLayout();
+        if (PresentationSource.FromVisual(EditorCanvas) is not HwndSource source)
+            throw new InvalidOperationException("The canvas is not in a window, so keys cannot be sent to it.");
+        KeyboardInput.Focus(EditorCanvas);
+
+        // Every tool has a key, and picking the wrong tool is the kind of mistake nothing else would catch.
+        var tools = new (Key Key, DrawingTool Tool)[]
+        {
+            (Key.E, DrawingTool.Eraser), (Key.G, DrawingTool.Fill), (Key.I, DrawingTool.Eyedropper),
+            (Key.L, DrawingTool.Line), (Key.U, DrawingTool.Rectangle), (Key.M, DrawingTool.Selection),
+            (Key.B, DrawingTool.Pencil)
+        };
+        foreach (var (key, tool) in tools)
+        {
+            KeyboardInput.Type(source, key);
+            KeyboardInput.WaitUntil(() => EditorCanvas.Tool == tool, $"{key} did not select the {tool} tool");
+        }
+
+        // The brush keys, which also prove an unmodified punctuation key arrives as itself.
+        var radius = EditorCanvas.BrushRadius;
+        KeyboardInput.Type(source, Key.OemCloseBrackets);
+        KeyboardInput.WaitUntil(() => EditorCanvas.BrushRadius == radius + 1, "] did not grow the brush");
+        KeyboardInput.Type(source, Key.OemOpenBrackets);
+        KeyboardInput.WaitUntil(() => EditorCanvas.BrushRadius == radius, "[ did not shrink the brush back");
+
+        var grid = EditorCanvas.ShowGrid;
+        KeyboardInput.Type(source, Key.H);
+        KeyboardInput.WaitUntil(() => EditorCanvas.ShowGrid != grid, "H did not toggle the grid");
+        KeyboardInput.Type(source, Key.H);
+        KeyboardInput.WaitUntil(() => EditorCanvas.ShowGrid == grid, "H did not toggle the grid back");
+
+        // Space is held rather than struck, and is the one thing that reaches OnKeyUp, so a key that is never
+        // released would show up here as a canvas stuck in panning.
+        KeyboardInput.Press(source, Key.Space);
+        KeyboardInput.WaitUntil(() => EditorCanvas.SpacePressed, "holding Space did not arm panning");
+        KeyboardInput.Release(source, Key.Space);
+        KeyboardInput.WaitUntil(() => !EditorCanvas.SpacePressed, "releasing Space did not disarm panning");
+
+        // Control, read from the real key state.
+        KeyboardInput.Type(source, Key.A, ModifierKeys.Control);
+        KeyboardInput.WaitUntil(() => session.Selection.Any(), "Ctrl+A did not select anything");
+        KeyboardInput.Type(source, Key.D, ModifierKeys.Control);
+        KeyboardInput.WaitUntil(() => !session.Selection.Any(), "Ctrl+D did not clear the selection");
+
+        // Control and Shift together, against something undoable. The stroke is made through the session
+        // rather than with the pointer: giving WPF a keyboard focus makes it work out afresh where the
+        // pointer is by asking the system, and on a desktop that is not being displayed there is no cursor to
+        // report, so it settles outside the window and stops accepting driven moves for good. The pointer
+        // pipeline is covered on its own in VerifyPointerInput, which is why that runs before this, and what
+        // these keys are here to prove is the shortcut, not the stroke.
+        var document = session.Document;
+        var cell = HexGeometry.FromOffset(6, document.Height / 2, document.Orientation);
+        const uint stroke = 0xFF20C040;
+        SetColor(stroke);
+        session.BeginStroke();
+        session.Paint(cell, stroke);
+        session.EndStroke();
+        var painted = document.IndexOf(cell);
+        if (painted < 0 || document.CompositeAt(painted) != stroke)
+            throw new InvalidOperationException($"The cell the keyboard checks undo was not painted: cell {cell.Q},{cell.R} is index {painted}.");
+        KeyboardInput.Type(source, Key.Z, ModifierKeys.Control);
+        KeyboardInput.WaitUntil(() => document.CompositeAt(painted) == 0, "Ctrl+Z did not undo the stroke");
+        KeyboardInput.Type(source, Key.Z, ModifierKeys.Control | ModifierKeys.Shift);
+        KeyboardInput.WaitUntil(() => document.CompositeAt(painted) == stroke, "Ctrl+Shift+Z did not redo the stroke");
+        KeyboardInput.Type(source, Key.Z, ModifierKeys.Control);
+        KeyboardInput.WaitUntil(() => document.CompositeAt(painted) == 0, "Ctrl+Z did not undo the redone stroke");
+
+        // Modifiers must not be left down, or every later key would arrive as a shortcut.
+        if (Keyboard.Modifiers != ModifierKeys.None)
+            throw new InvalidOperationException($"The keyboard checks left {Keyboard.Modifiers} held down.");
+        if (session.IsDirty) throw new InvalidOperationException("The keyboard checks left the document unsaved.");
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
+            $"Keyboard input: {tools.Length} tool keys, brush and grid keys, Space held and released, Ctrl+A, Ctrl+D, Ctrl+Z and Ctrl+Shift+Z verified through real key messages with the modifiers really held\n");
     }
 
     public void VerifyInterface(string folder)

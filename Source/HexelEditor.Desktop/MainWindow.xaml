@@ -4,7 +4,12 @@
         xmlns:local="clr-namespace:HexelEditor.Desktop"
         Title="Hexel Editor" Width="1440" Height="960" MinWidth="1180" MinHeight="760"
         WindowStartupLocation="CenterScreen" Closing="OnClosing" PreviewKeyDown="OnKeyDown" PreviewKeyUp="OnKeyUp">
-  <Grid Background="{StaticResource SurfaceAlternate}">
+  <!-- The shortcut handlers are on the content root as well as on the window. A tunneling event starts at the
+       root of the tree holding the focused element: usually the window, which handles the key and marks it
+       handled so this one never runs, but the window when nothing inside it is focused, and this grid when
+       the content is hosted for validation without the window. Keeping both means the shortcuts behave
+       exactly as they always have and are also reachable in the validation host. -->
+  <Grid Background="{StaticResource SurfaceAlternate}" PreviewKeyDown="OnKeyDown" PreviewKeyUp="OnKeyUp">
     <Grid.RowDefinitions>
       <RowDefinition Height="40" />
       <RowDefinition Height="44" />

@@ -104,9 +104,11 @@ public partial class App : Application
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
             window.VerifyInterface(folder);
             window.VerifyPalette(folder);
-            // Last, because it drives the pointer across the canvas and takes real mouse capture, and because
-            // it attaches a session of its own that no earlier check should be looking at.
+            // These two go last, because they drive the pointer and the keyboard for real: they take mouse
+            // capture, take the keyboard focus, and attach sessions of their own that no earlier check should
+            // be looking at.
             window.VerifyPointerInput(folder);
+            window.VerifyKeyboardInput(folder);
             Log.Write("Desktop verification passed.");
             Shutdown();
             return;
