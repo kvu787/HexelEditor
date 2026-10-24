@@ -221,3 +221,41 @@ The final runs happened while the machine was unlocked and in use. The watch rec
 ### Still open
 
 Screenshots are still not compared against committed baselines, so a visual regression would need someone to notice it. Keyboard input is still unchecked: the shortcut table is large and `OnKeyDown` is never exercised, and the same message-driven approach would now cover it.
+
+## User
+
+Yes, cover keyboard input the same way, so the shortcut table and OnKeyDown are exercised.
+
+## Assistant
+
+Done. The shortcut table is struck rather than called, with the modifiers genuinely held down.
+
+### A correction to what I said earlier
+
+I had said that a driver process on a second desktop can inject input there with `SendInput`. That is wrong, and trying it is how I found out: `SendInput` answers `ERROR_ACCESS_DENIED`. It only ever feeds the desktop currently being displayed. So on a desktop of its own it does nothing, and on the displayed one it would type into whatever the person at the machine is doing. Injection is not the tool for this, on either desktop.
+
+### What works instead
+
+A shortcut is read through `Keyboard.Modifiers`, which WPF answers by asking the operating system whether Control is down. A key message does not change that state, so posting `WM_KEYDOWN` for Control leaves it unheld and every shortcut needing it unreachable. `SetKeyboardState` is the way through: it changes the **calling thread's** key state only, which is the same state `GetKeyState` reports and therefore the state WPF reads. Nothing outside the process can see it, and the key messages go to one window handle this process owns, so this is safe on any desktop. It cannot reach another window, another process, or the user.
+
+### Two obstacles that were not obvious
+
+**The handlers were unreachable.** `PreviewKeyDown` sat on the window, and validation hosts the window's *content* without the window, so a tunneling shortcut event never passed through them. They are now on the content root as well as the window. The window still receives a key first and marks it handled, so nothing about the editor's behavior changes; the content root matters only where there is no window.
+
+**The keyboard focus breaks the pointer.** Taking the Win32 focus makes WPF work out afresh where the pointer is by asking the system, and on a desktop that is not being displayed there is no cursor to report. It settled on a position outside the window, about 30000 units away, decided the pointer had left, and then ignored every driven move for the rest of the run. Two consequences: WPF's own focus is used and `SetFocus` is deliberately not called, and the pointer checks run before the keyboard ones. The stroke these keys undo is made through the session rather than with the pointer, because what they are here to prove is the shortcut, not the stroke.
+
+### What is covered
+
+All seven tool keys, the brush and grid keys, `Space` held and released so `OnKeyUp` is reached as well, and `Ctrl+A`, `Ctrl+D`, `Ctrl+Z` and `Ctrl+Shift+Z`. The last two matter most, because they are what proves the modifier state is really being read.
+
+Nothing here opens a dialog or touches the clipboard. `Ctrl+N`, `Ctrl+O` and `Ctrl+S` would wait on a modal window nobody can answer, which hangs the run until it times out, and the clipboard belongs to the window station, which is shared with whoever is using the machine. Both are now written down as rules.
+
+### What was checked and what was not
+
+The full validation passes, with the watch reporting nothing of the run's on a user display, no foreground change and no cursor confinement, on a machine that was unlocked and in use at the time.
+
+Not measured: that the shipped editor still answers shortcuts when the window itself holds focus. That one rests on the window's handler being untouched and still running first, which is WPF's tunneling order, rather than on a test, because pressing keys at the real window would mean injecting into the user's desktop.
+
+### Still open
+
+Screenshots are still not compared against committed baselines, which remains the one gap where a regression would need a person to notice it.
