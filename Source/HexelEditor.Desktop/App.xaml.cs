@@ -34,7 +34,16 @@ public partial class App : Application
         {
             Log.Write($"Unhandled dispatcher exception: {args.Exception}");
             args.Handled = true;
-            if (verifying) { Shutdown(1); return; }
+            if (verifying)
+            {
+                // Ends the process rather than asking WPF to shut down. A check that fails after driving the
+                // pointer has left the input system mid-gesture, and a shutdown from there has been seen to
+                // hang, which turns a failed check into a timeout and buries the reason. The log is written
+                // with AutoFlush, so the diagnosis is already on disk by the time this runs.
+                Log.Write("Application exited. Exit code: 1.");
+                Log.Dispose();
+                Environment.Exit(1);
+            }
             MessageBox.Show(args.Exception.Message, "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Error);
         };
     }
@@ -68,8 +77,23 @@ public partial class App : Application
             window.Width = 1440; window.Height = 960;
             var root = (FrameworkElement)window.Content;
             window.Content = null;
-            // SKElement needs a presentation source. This hidden host never shows on a display.
-            using var host = new HwndSource(new HwndSourceParameters("HexelVerification") { Width = 1440, Height = 960, WindowStyle = 0, PositionX = -30000, PositionY = -30000 });
+            // SKElement needs a presentation source. This host never shows on a display: it sits at
+            // -30000,-30000, which is on no monitor, and validation runs it on a desktop that is not being
+            // displayed at all.
+            //
+            // It is marked visible all the same, because WPF's hit testing for pointer input asks the window
+            // manager which window lies at a point, and the window manager only answers with visible windows.
+            // Without WS_VISIBLE a driven pointer's position arrives correctly and then lands on nothing, so
+            // no element ever sees a mouse event. WS_EX_TOOLWINDOW keeps it out of the taskbar regardless.
+            using var host = new HwndSource(new HwndSourceParameters("HexelVerification")
+            {
+                Width = 1440,
+                Height = 960,
+                PositionX = -30000,
+                PositionY = -30000,
+                WindowStyle = unchecked((int)(VisibleStyle | PopupStyle)),
+                ExtendedWindowStyle = ToolWindowStyle
+            });
             host.RootVisual = root;
             root.Measure(new Size(1440, 960)); root.Arrange(new Rect(0, 0, 1440, 960)); root.UpdateLayout();
             window.VerifyEditor(folder);
@@ -79,8 +103,10 @@ public partial class App : Application
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
             window.VerifyInterface(folder);
-            // Last, because it clicks real swatches and adds a color, which no later step should inherit.
             window.VerifyPalette(folder);
+            // Last, because it drives the pointer across the canvas and takes real mouse capture, and because
+            // it attaches a session of its own that no earlier check should be looking at.
+            window.VerifyPointerInput(folder);
             Log.Write("Desktop verification passed.");
             Shutdown();
             return;
@@ -131,6 +157,8 @@ public partial class App : Application
     private const int ExtendedStyle = -20;
     private static readonly IntPtr NoActivateStyle = 0x08000000;
     private const uint FailCriticalErrors = 0x0001, NoGeneralProtectionFaultErrorBox = 0x0002, NoOpenFileErrorBox = 0x8000;
+    private const uint VisibleStyle = 0x10000000, PopupStyle = 0x80000000;
+    private const int ToolWindowStyle = 0x00000080;
 
     // The generated LibraryImport marshaller needs unsafe code switched on for the whole project, which is a
     // poor trade for one call made once per launch.

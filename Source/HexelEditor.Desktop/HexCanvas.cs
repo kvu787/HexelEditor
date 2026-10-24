@@ -75,6 +75,14 @@ public sealed class HexCanvas : SKElement
 
     private HexCoordinate Coordinate(Point point) => HexGeometry.FromPoint((point.X - offsetX) / Zoom, (point.Y - offsetY) / Zoom, session!.Document.Orientation, ArtworkRenderer.CellRadius);
 
+    // The inverse of Coordinate: where a cell's center sits in this canvas's own coordinates. Validation aims
+    // real pointer input at a cell with it, so the pan and zoom it reads are the ones the pointer handlers use.
+    public Point PointOf(HexCoordinate coordinate)
+    {
+        var (x, y) = HexGeometry.Center(coordinate, session!.Document.Orientation, ArtworkRenderer.CellRadius);
+        return new Point(x * Zoom + offsetX, y * Zoom + offsetY);
+    }
+
     private void Paint(object? sender, SKPaintSurfaceEventArgs args)
     {
         var canvas = args.Surface.Canvas;

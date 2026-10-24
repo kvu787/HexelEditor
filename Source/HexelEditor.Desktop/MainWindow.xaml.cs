@@ -576,6 +576,107 @@ public partial class MainWindow : Window
             $"Palette grid: {swatches} swatches in {HexDocument.PaletteColumns} columns at {side} pixels square, choosing and adding a color verified\n");
     }
 
+    // Everything else drives the editor by calling into it. This drives the pointer, which is how the editor
+    // is actually used: window messages carrying real positions, through WPF's own input provider, so hit
+    // testing decides what is hit, the canvas takes and releases real mouse capture, and the handlers see the
+    // moves in the order a hand would make them. Painting is what this application is for, and none of it was
+    // covered before: a wrong point-to-cell mapping, a stroke that dropped the cells between two moves, a
+    // canvas that something had covered, or a pan fighting with drawing would all have passed.
+    public void VerifyPointerInput(string folder)
+    {
+        // A blank canvas rather than the example, so that a cell holds the stroke or holds nothing. Erasing
+        // clears the active layer, which on artwork with three layers would leave the ones underneath showing
+        // and make "did the erase work" a question about compositing instead of about the gesture.
+        AttachSession(new EditorSession(new HexDocument(40, 32)));
+        SetTool(DrawingTool.Pencil);
+        EditorCanvas.BrushRadius = 0;
+        const uint stroke = 0xFF2040FF;
+        SetColor(stroke);
+        UpdateLayout();
+        EditorCanvas.Fit();
+        UpdateLayout();
+
+        var document = session.Document;
+        var orientation = document.Orientation;
+        var row = document.Height / 2;
+        var from = HexGeometry.FromOffset(4, row, orientation);
+        var to = HexGeometry.FromOffset(12, row, orientation);
+        var line = from.LineTo(to).ToArray();
+        if (line.Length < 5) throw new InvalidOperationException("The pointer check needs a run of cells to drag across.");
+        if (document.IndexOf(from) < 0 || document.IndexOf(to) < 0)
+            throw new InvalidOperationException("The cells the pointer check drags between are outside the canvas.");
+
+        // Hit testing, from the root, so that anything in front of the canvas would be found instead of it.
+        var start = EditorCanvas.PointOf(from);
+        var hit = PointerInput.HitTest(EditorCanvas, start);
+        if (!ReferenceEquals(hit, EditorCanvas))
+            throw new InvalidOperationException($"The pointer reaches {hit?.GetType().Name ?? "nothing"} at the canvas, not the canvas.");
+
+        // A move on its own has to land on the cell the point was taken from, which is the mapping between
+        // pointer positions and cells working in both directions.
+        PointerInput.Move(EditorCanvas, start);
+        if (EditorCanvas.HoverCoordinate != from)
+            throw new InvalidOperationException($"A pointer move aimed at {start.X:F1},{start.Y:F1} for cell {from.Q},{from.R} was read as cell {EditorCanvas.HoverCoordinate?.ToString() ?? "none"}. {PointerInput.Describe(EditorCanvas)}");
+
+        // The stroke. Capture is checked while the button is down, because losing it mid-gesture is what ends
+        // a stroke early, and it has to be given back afterwards or the next click goes to the wrong place.
+        PointerInput.Press(EditorCanvas, start, MouseButton.Left);
+        if (!ReferenceEquals(Mouse.Captured, EditorCanvas))
+            throw new InvalidOperationException("The canvas did not capture the mouse for a stroke.");
+        var end = EditorCanvas.PointOf(to);
+        for (var step = 1; step <= 8; step++)
+        {
+            var fraction = (double)step / 8;
+            PointerInput.Move(EditorCanvas, new Point(start.X + (end.X - start.X) * fraction, start.Y + (end.Y - start.Y) * fraction), MouseButton.Left);
+        }
+        PointerInput.Release(EditorCanvas, end, MouseButton.Left);
+        if (Mouse.Captured != null)
+            throw new InvalidOperationException($"The canvas kept the mouse captured after the stroke, held by {Mouse.Captured}.");
+
+        // Eight moves across nine cells, so the gesture only joins up if the cells between two reported
+        // positions are filled in as well.
+        foreach (var cell in line)
+        {
+            var index = document.IndexOf(cell);
+            if (index < 0) throw new InvalidOperationException($"Cell {cell.Q},{cell.R} on the stroke is outside the canvas.");
+            if (document.CompositeAt(index) != stroke)
+                throw new InvalidOperationException($"A dragged stroke missed cell {cell.Q},{cell.R}, which holds {ColorMath.Format(document.CompositeAt(index))}.");
+        }
+
+        // One gesture is one undo, however many moves it was made of.
+        if (!session.CanUndo) throw new InvalidOperationException("A dragged stroke left nothing to undo.");
+        session.Undo();
+        if (line.Any(cell => document.CompositeAt(document.IndexOf(cell)) != 0))
+            throw new InvalidOperationException("Undoing the stroke did not take all of it back out, so the drag was recorded as more than one command.");
+
+        // The right button erases with the same gesture. Paint first, then take it back out by dragging.
+        PointerInput.Drag(EditorCanvas, start, end, MouseButton.Left);
+        if (line.Any(cell => document.CompositeAt(document.IndexOf(cell)) != stroke))
+            throw new InvalidOperationException("The drag that the erase check paints over did not fill every cell.");
+        PointerInput.Drag(EditorCanvas, start, end, MouseButton.Right);
+        foreach (var cell in line)
+            if (document.CompositeAt(document.IndexOf(cell)) != 0)
+                throw new InvalidOperationException($"A right-button drag did not erase cell {cell.Q},{cell.R}.");
+        session.Undo();
+        session.Undo();
+
+        // Panning moves the canvas under the pointer and must not paint while doing it. The same point
+        // reading as a different cell afterwards is the pan having happened.
+        var edits = session.CanUndo;
+        var before = EditorCanvas.HoverCoordinate;
+        PointerInput.Drag(EditorCanvas, start, new Point(start.X + 120, start.Y + 40), MouseButton.Middle);
+        PointerInput.Move(EditorCanvas, start);
+        var after = EditorCanvas.HoverCoordinate;
+        if (after == before)
+            throw new InvalidOperationException($"A middle-button drag did not pan the canvas: {start.X},{start.Y} still reads as cell {after}.");
+        if (session.CanUndo != edits) throw new InvalidOperationException("Panning the canvas changed the artwork.");
+
+        // The host closes by shutting the application down, which a document with unsaved edits would stop.
+        if (session.IsDirty) throw new InvalidOperationException("The pointer checks left the document unsaved.");
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
+            $"Pointer input: hit testing, mouse capture, a {line.Length}-cell drag, right-button erase and middle-button pan verified through real window messages\n");
+    }
+
     public void VerifyInterface(string folder)
     {
         var submenuPath = VerifyMenu();
