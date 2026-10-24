@@ -72,3 +72,56 @@ One trap to avoid: a loopback RDP session on Windows 11 Pro does not give you a 
 8. Reserve a separate desktop or a VM for the cases that genuinely need a foreground.
 
 The ordering matters more than any single technique: every rung you can answer a question on without a display is a question the agent can answer while you keep working.
+
+## User
+
+what does it mean to have "a second win32 desktop"
+
+## Assistant
+
+A **desktop** is a kernel object in Windows, not a metaphor. It is a container that owns a set of windows, their menus and their hooks, plus the input state that goes with them: which window is foreground, which has keyboard focus, which holds mouse capture, and the current key states. The hierarchy is:
+
+```
+Session 1                      your interactive logon session
+  WinSta0                      the one window station wired to the physical keyboard, mouse and display
+    Default                    the desktop you are looking at right now
+    Winlogon                   the one UAC and Ctrl+Alt+Del switch to
+    Screen-saver               what a screen saver runs on
+    HexelValidation            one you create
+```
+
+Creating a second desktop means calling `CreateDesktop` to add a sibling to `Default` inside the same window station, and launching the app into it.
+
+### Why that isolates anything
+
+Only one desktop per window station is the **input desktop** at a time. That one is displayed and receives physical input; every other desktop is running but invisible and unreachable by the keyboard and mouse. Windows on it still exist, still pump messages, still lay out and still render -- there is simply no screen showing them and no hardware input arriving.
+
+You have seen this: when a UAC prompt dims everything and your windows vanish, Windows switched the input desktop to `Winlogon`. Your programs did not minimize or stop; they are on a desktop that is no longer being shown. The classic "a service popped up a `MessageBox` and now it is hung forever with no dialog anywhere" bug is the same thing from the other side.
+
+The part that matters for a validation harness is that input injection is **per-desktop**. `SendInput` posts into the input queue of the desktop that the calling thread is attached to. So a driver process attached to `HexelValidation` can inject clicks, drags and keystrokes, call `SetForegroundWindow`, and let the app grab mouse capture and open modal dialogs -- and none of it can reach your keyboard, because your keyboard belongs to `Default`. The isolation is structural rather than a matter of being careful, which is a different kind of guarantee from `WS_EX_NOACTIVATE` and a foreground guard.
+
+### How a process gets onto it
+
+Two ways, and neither is automatic:
+
+- `CreateProcess` with `STARTUPINFO.lpDesktop` set to `"WinSta0\HexelValidation"`. The child and all its descendants start on that desktop.
+- `SetThreadDesktop` on a thread that has not yet created a window, message queue or hook. Practically that means doing it first thing on a fresh thread.
+
+The gotcha for this repo: `Process.Start` and PowerShell's `Start-Process` cannot set `lpDesktop`, so launching the editor there needs a `CreateProcessW` P/Invoke rather than a one-line change. Capture then has to happen from a process on that same desktop too, since `GetWindowRect` and window enumeration do not reach across. `PrintWindow` with `PW_RENDERFULLCONTENT` works there, which `Save-WindowImage` already passes.
+
+No administrator rights are needed to create a desktop in your own window station. Keep the `HDESK` handle open in the launcher, because a desktop is destroyed once nothing holds a handle and no threads remain on it.
+
+### What you give up
+
+- You cannot watch it. Everything comes back as files. `SwitchDesktop` would flip your screen to it, which is exactly the disruption to avoid.
+- Shell integration is absent. There is no `explorer.exe` on that desktop, so no taskbar, no tray, no shell drag and drop.
+- UI Automation does not cross desktops; the automation client has to live on the same desktop as the app.
+- Hardware-accelerated rendering on a non-input desktop is a known soft spot and can capture black. It does not bite here, because the canvas is Skia software rendering.
+
+### One correction to what I said earlier
+
+I listed the clipboard as per-desktop. It is not -- the clipboard and the atom table belong to the **window station**, so a second desktop inside `WinSta0` shares your clipboard. Separate input queue and foreground, shared clipboard. The clipboard still belongs on the audit list, and an app on that desktop calling `Clipboard.SetText` would trample yours. Only a separate window station or a separate session gets you a separate clipboard.
+
+### Whether it is worth it for this app
+
+Probably not yet. A second desktop earns its complexity when you need a real foreground: blocking modal dialogs, activation and focus logic, genuine `SendInput` gestures, drag and drop. The offscreen `HwndSource` already beats it for everything else, because it runs in-process where assertions can touch `session` and the real controls directly instead of inferring from pixels. Driving real pointer input through the existing host closes a much larger hole for much less work. Keep the second desktop in reserve for the day a check genuinely needs to be the foreground window.
