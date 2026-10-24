@@ -452,3 +452,41 @@ Verification now also draws a canvas at each level of detail and checks that a c
 ### Known and left alone
 
 Structural changes - a palette colour, a layer toggle, the background - clone the whole document twice to record undo. At two million cells that is tens of megabytes a time, so those actions will hitch on a large canvas even though painting does not. It is a different piece of work from this one, and painting was what you asked about.
+
+## User
+
+Yes, fix the structural undo so a palette, layer or background change does not clone the whole document.
+
+## Assistant
+
+Done. On a 2000 by 1000 canvas with three layers, a structural change went from about 12 ms to 1.0 ms and an undo of it from about 6 ms to 0.76 ms.
+
+### What it was doing
+
+Recording one copied the whole document twice, and applying an undo copied it a third time. A copy is every cell of every layer: 22.9 MB for three layers at this size, measured at 5.96 ms each.
+
+None of those changes can alter a cell. Adding a palette colour, hiding or renaming or reordering a layer, changing its opacity, changing the canvas background: all of them leave every cell exactly as it was. The copies were of two million cells about to be identical.
+
+### What it does now
+
+The record shares the cells and copies only the structure: the layer list and its order, each layer's name, visibility, lock and opacity, the palette, the background, the document name.
+
+| Operation on 2000 x 1000, three layers | Before   | After    |
+| -------------------------------------- | -------- | -------- |
+| Copy made to record a change           | 5.96 ms  | 0.205 ms |
+| A structural change                    | ~12 ms   | 1.04 ms  |
+| An undo of one                         | ~6 ms    | 0.76 ms  |
+
+It also makes the history budget mean something again. An entry was about 16 MB of cells, so the 64 MiB budget held four structural changes on a large canvas and quietly dropped the rest. An entry is now a few kilobytes.
+
+One smaller thing found on the way: copying a document allocated a first layer through the ordinary constructor and then threw it away, which on a large canvas is megabytes allocated and zeroed for nothing. Copies now ask for a document without one.
+
+### Why sharing is safe
+
+History is undone in order. Reaching a structural record means every painting command made after it has already been undone, so the cells it shares hold exactly what they held when it was made. Layer properties are still copied, because those are mutated in place and a shared reference would let a later change reach back into the record.
+
+That ordering argument is the whole basis of the change, so it has a test of its own: add a layer, paint on it, then undo both and redo both, checking the cell at each step. There are also tests that a deleted layer's cells come back on undo, that every kind of structural change undoes to the right value, and that ten structural changes on a 2000 by 1000 canvas are all still there to undo, which is the one that would have failed before.
+
+### Checked
+
+62 unit tests pass. Full validation passes, with the watch reporting nothing on a user display and no focus taken. Structural undo through the real interface was already covered: the palette check adds a colour and undoes it, which is one of these records, and asserts the palette grid follows.
