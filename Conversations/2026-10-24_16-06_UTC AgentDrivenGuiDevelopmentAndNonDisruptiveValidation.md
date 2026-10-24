@@ -334,3 +334,63 @@ Memory is not the obstacle: a layer is 4 bytes a cell, so 8 MB at 2000 x 1000, a
 Export. The PNG path renders at a 16 pixel cell radius, which at 2000 x 1000 is about 58,890 x 25,000 pixels, or 1.5 billion. The existing guard already refuses anything over 32,768 a side or 64 million pixels, and rightly. SVG is worse: one polygon per cell is 2,000,000 elements and hundreds of megabytes of text. Exporting a canvas that size needs a chosen scale, or tiles, and the full-resolution single-image export has to go.
 
 So: yes to editing a 2000 x 1000 canvas smoothly, with the renderer changed to spend time per visible pixel rather than per cell in the document. No to exporting one as a single image.
+
+## User
+
+i was referring to editing. for now, taking a decent amount of time to export is fine.
+
+one thing i'm curious about is what perf would be like if the renderer was like the blender viewport rendering a grid of flat hex meshes. each hex mesh would be composed of 4 triangles, so a 2000x1000 hex grid would be 2000x1000x4=8 million triangles, which doesn't seem unfeasible. you would use a simple unlit shader to "color in" each hex cell.
+
+## Assistant
+
+The arithmetic is right. A convex hexagon triangulates into 6 - 2 = 4 triangles, so 8,000,000 is the correct count, and no, 8,000,000 triangles is not infeasible for a GPU. But it is the wrong shape of solution, and measuring the alternative says the GPU is not needed at this size at all.
+
+### The CPU is already enough at 2000 x 1000
+
+A renderer that costs per visible pixel instead of per cell, measured at the real size:
+
+| Operation                                            | Per frame   |
+| ---------------------------------------------------- | ----------- |
+| Whole 2000 x 1000 canvas into the window, nearest    | 1.42 ms     |
+| Whole canvas into the window, filtered               | 11.43 ms    |
+| 60 x 50 cells magnified to fill the window           | 1.35 ms     |
+| Rebuild the entire cache, 1 layer                    | 12.65 ms    |
+| Rebuild the entire cache, 3 layers                   | 46.01 ms    |
+| Rebuild the entire cache, 32 layers                  | 545.03 ms   |
+
+Against today's 101 ms at 256 x 256, extrapolating to about 3 seconds at 2000 x 1000. The filtered figure is an artifact of rebuilding the mip chain on every call; built once with the cache it belongs with the others. The full-cache rebuild only happens on load or when a layer's visibility or opacity changes, and a stroke touches a handful of cells, so an edit updates bytes rather than megabytes.
+
+So a cached cell raster plus viewport culling lands at about 1.4 ms a frame at 2000 x 1000. That is the target met on the processor, with no interop and nothing new to depend on.
+
+### Three tiers, because a blit is not a hexagon
+
+A one-pixel-per-cell raster is in offset coordinates, where odd rows sit half a cell across, and that shear is not an affine transform, so it cannot simply be drawn skewed. It does not need to be: the error is half a cell, which is under half a pixel exactly when cells are under a pixel, which is the only regime where a blit is wanted.
+
+- Cells over about 3 pixels: hexagon paths, iterating only the visible columns and rows. Bounded by the window, so flat in canvas size.
+- Cells of 1 to 3 pixels: one filled rectangle or point per cell, culled the same way. No path building.
+- Cells under a pixel: blit the cached raster. The hexagon shape is sub-pixel and the row shear with it.
+
+### Why the mesh is the wrong shape
+
+The mesh makes the work proportional to cells when the output is proportional to pixels. Fitting that canvas to a window puts 2,000,000 sub-pixel hexagons into under 1,000,000 pixels, which is the worst case for a rasterizer: per-triangle setup dominates when triangles are smaller than a pixel, and sub-pixel geometry shimmers as it moves. As a rough estimate, 8,000,000 setup-bound triangles is some single-digit number of milliseconds, which is *slower* than the 1.42 ms blit, for a worse-looking result.
+
+Buffer sizes tell the same story. Written out per triangle, 24,000,000 vertices at 12 bytes is about 288 MB; indexed per hexagon it is still around 240 MB, because a flat colour per cell cannot share the corner vertices that three hexagons meet at. Instancing fixes that - one 6-vertex hexagon, 2,000,000 instances of position and colour, about 24 MB - but it fixes the memory and the draw calls, not the sub-pixel overdraw.
+
+### The GPU formulation that is actually better
+
+Send no geometry at all. Two triangles for a full-screen quad, the cell colours in a texture, and a fragment shader that turns each pixel's position into an axial coordinate and samples that cell. The inverse hex layout plus cube rounding is already in `HexCoordinate.Round`, about twenty operations and one texture fetch per pixel.
+
+That costs per screen pixel and is completely independent of canvas size: 2000 x 1000 and 20000 x 10000 render identically, in a fraction of a millisecond. Grid lines and the cursor ring fall out of the distance to the nearest hexagon edge, antialiased for free. Panning and zooming are two uniforms. An edit is a sub-texture update of a few bytes. Layers composite on edit into one texture, as the processor does now.
+
+That is the right GPU design, and it is strictly better than the mesh. It is also, at this size, solving a problem the measurements say is already solved.
+
+### What going GPU would cost here
+
+- WPF and OpenGL interop. `SKGLElement` exists, and the OpenTK and GLFW assemblies already ship in the build, 5 MB of them currently never loaded. But GL inside WPF goes through a control that either shares the surface through `NV_DX_interop` or falls back to reading pixels back every frame, which would hand back the win, and which of those happens depends on the driver.
+- It would break the validation harness. `RenderTargetBitmap` cannot capture GPU-composited content, and the hidden host runs on a desktop that is never displayed, where a GL context is not something to count on. The whole property of verifying the real interface headlessly, while the machine is locked, rests on the canvas being rasterized on the processor. That is the most expensive part of the bill and it is not obvious up front.
+
+### Recommendation
+
+Do the three tiers on the processor. It is measured sufficient for 2000 x 1000 at about 1.4 ms a frame, it keeps the verification that currently works, and it depends on nothing new.
+
+Keep the shader in reserve for when the target is much larger canvases, or per-cell effects and animation, where cost per pixel rather than per cell starts to matter for its own sake. If that day comes, write the fragment shader, not the mesh.
