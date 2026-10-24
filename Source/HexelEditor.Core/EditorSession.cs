@@ -56,6 +56,45 @@ public sealed class EditorSession
         if (cells[index] == color) return;
         stroke!.TryAdd(index, cells[index]);
         cells[index] = color;
+        MarkCellDirty(index);
+    }
+
+    // The smallest rectangle of cells, in columns and rows, that has changed since a reader last took it.
+    // The canvas keeps a raster of the artwork and recomposites only this much of it, so a brush stroke costs
+    // the handful of cells it touched rather than every cell in the document. On a canvas of two million
+    // cells that is the difference between a stroke that keeps up and one that does not.
+    private int dirtyMinColumn = int.MaxValue, dirtyMinRow = int.MaxValue, dirtyMaxColumn = -1, dirtyMaxRow = -1;
+
+    public void MarkCellDirty(int index)
+    {
+        if (index < 0 || index >= Document.CellCount) return;
+        var column = index % Document.Width;
+        var row = index / Document.Width;
+        if (column < dirtyMinColumn) dirtyMinColumn = column;
+        if (column > dirtyMaxColumn) dirtyMaxColumn = column;
+        if (row < dirtyMinRow) dirtyMinRow = row;
+        if (row > dirtyMaxRow) dirtyMaxRow = row;
+    }
+
+    public void MarkAllCellsDirty()
+    {
+        dirtyMinColumn = 0;
+        dirtyMinRow = 0;
+        dirtyMaxColumn = Document.Width - 1;
+        dirtyMaxRow = Document.Height - 1;
+    }
+
+    // Returns what has changed and forgets it, so two readers would not both be served. The canvas is the
+    // only reader.
+    public (int MinColumn, int MinRow, int MaxColumn, int MaxRow)? TakeDirtyCells()
+    {
+        if (dirtyMaxColumn < 0 || dirtyMaxRow < 0) return null;
+        var region = (dirtyMinColumn, dirtyMinRow, dirtyMaxColumn, dirtyMaxRow);
+        dirtyMinColumn = int.MaxValue;
+        dirtyMinRow = int.MaxValue;
+        dirtyMaxColumn = -1;
+        dirtyMaxRow = -1;
+        return region;
     }
 
     public void EndStroke(string label = "Brush stroke")
@@ -134,7 +173,15 @@ public sealed class EditorSession
         Notify(EditorChange.Selection);
     }
 
-    public void SelectAll() { EndStroke(); Selection.Clear(); selectionPivot = null; Selection.UnionWith(Enumerable.Range(0, Document.CellCount)); Notify(EditorChange.Selection); }
+    public void SelectAll()
+    {
+        EndStroke();
+        Selection.Clear();
+        selectionPivot = null;
+        Selection.EnsureCapacity(Document.CellCount);
+        for (var index = 0; index < Document.CellCount; index++) Selection.Add(index);
+        Notify(EditorChange.Selection);
+    }
     public void ClearSelection() { EndStroke(); Selection.Clear(); selectionPivot = null; Notify(EditorChange.Selection); }
 
     public void ClearPixels()
@@ -326,7 +373,11 @@ public sealed class EditorSession
         public void Apply(EditorSession session, bool forward)
         {
             session.ActiveLayer = Layer;
-            foreach (var edit in Edits) session.Document.Layers[Layer].Cells[edit.Index] = forward ? edit.After : edit.Before;
+            foreach (var edit in Edits)
+            {
+                session.Document.Layers[Layer].Cells[edit.Index] = forward ? edit.After : edit.Before;
+                session.MarkCellDirty(edit.Index);
+            }
             var selection = forward ? AfterSelection : BeforeSelection;
             if (selection != null) { session.Selection.Clear(); session.Selection.UnionWith(selection.Indices); session.selectionPivot = selection.Pivot; }
         }

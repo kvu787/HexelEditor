@@ -13,8 +13,14 @@ public sealed class HexLayer
 
 public sealed class HexDocument
 {
-    public const int MaximumDimension = 256;
+    public const int MaximumDimension = 2048;
     public const int MaximumLayers = 32;
+
+    // A side of 2048 would allow over four million cells, which at four bytes a cell and 32 layers is more
+    // than half a gigabyte of cell data. The cell count and a budget for that data are what actually bound
+    // the document, and together they leave room for the 2000 by 1000 canvas the editor is built to handle.
+    public const int MaximumCellCount = 2_200_000;
+    public const long MaximumCellBytes = 256L * 1024 * 1024;
     public const int PaletteColumns = 16;
     // The default palette already fills a 16 by 16 grid, so the limit leaves room for colors the artist adds.
     public const int MaximumPaletteColors = 512;
@@ -66,6 +72,8 @@ public sealed class HexDocument
             throw new ArgumentOutOfRangeException(nameof(width), width, $"Canvas width must be between 1 and {MaximumDimension}.");
         if (height is < 1 or > MaximumDimension)
             throw new ArgumentOutOfRangeException(nameof(height), height, $"Canvas height must be between 1 and {MaximumDimension}.");
+        if ((long)width * height > MaximumCellCount)
+            throw new ArgumentOutOfRangeException(nameof(width), (long)width * height, $"A canvas holds at most {MaximumCellCount:N0} hexels, and {width} by {height} is {(long)width * height:N0}.");
         if (!Enum.IsDefined(orientation)) throw new ArgumentOutOfRangeException(nameof(orientation));
         Width = width;
         Height = height;
@@ -93,7 +101,14 @@ public sealed class HexDocument
     public void ValidateLayerCount(int layers)
     {
         if (layers is < 1 or > MaximumLayers) throw new InvalidOperationException($"The document limit is {MaximumLayers} layers.");
+        if ((long)layers * CellCount * sizeof(uint) > MaximumCellBytes)
+            throw new InvalidOperationException($"{layers} layers of {CellCount:N0} hexels needs more than the {MaximumCellBytes / 1024 / 1024} MB this document may hold for cells.");
     }
+
+    // The largest number of layers this canvas can hold inside the cell budget, so a caller can say what the
+    // limit is here rather than discovering it by being refused.
+    public int MaximumLayersForThisCanvas =>
+        (int)Math.Clamp(MaximumCellBytes / ((long)CellCount * sizeof(uint)), 1, MaximumLayers);
 
     public HexDocument Clone()
     {
@@ -110,6 +125,11 @@ public static class ColorMath
 {
     public static uint Over(uint source, uint destination, byte opacity = 255)
     {
+        // The common cases, taken before any floating point: a cell holding nothing, and an opaque cell on a
+        // fully opaque layer, which is most of a finished drawing. Compositing a canvas of two million cells
+        // runs this once per cell per layer, so the arithmetic it skips adds up.
+        if ((source >> 24) == 0) return destination;
+        if (opacity == 255 && (source >> 24) == 255) return source;
         var sourceAlpha = (source >> 24) / 255.0 * opacity / 255.0;
         if (sourceAlpha == 0) return destination;
         var destinationAlpha = (destination >> 24) / 255.0;

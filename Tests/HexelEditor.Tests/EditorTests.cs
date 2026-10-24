@@ -222,7 +222,7 @@ public sealed class EditorTests
     public void InvalidCanvasSizesAndTheLayerLimitAreRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(0, 20));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(257, 20));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(HexDocument.MaximumDimension + 1, 20));
         var session = new EditorSession(new HexDocument(2, 2));
         while (session.Document.Layers.Count < HexDocument.MaximumLayers) session.AddLayer();
         Assert.Throws<InvalidOperationException>(session.AddLayer);
@@ -254,7 +254,55 @@ public sealed class EditorTests
     public void CanvasDimensionErrorsNameTheDimensionThatIsOutOfRange()
     {
         Assert.Equal("width", Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(0, 20)).ParamName);
-        Assert.Equal("height", Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(20, 257)).ParamName);
+        Assert.Equal("height", Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(20, HexDocument.MaximumDimension + 1)).ParamName);
+    }
+
+    [Fact]
+    public void ACanvasOfTwoThousandByOneThousandIsAllowedAndOneTooLargeIsNot()
+    {
+        var document = new HexDocument(2000, 1000);
+        Assert.Equal(2_000_000, document.CellCount);
+        // Either side may be as long as the limit, but not both: it is the cell count that costs.
+        Assert.Throws<ArgumentOutOfRangeException>(() => new HexDocument(HexDocument.MaximumDimension, HexDocument.MaximumDimension));
+    }
+
+    [Fact]
+    public void TheLayerLimitFollowsTheCellBudgetOnALargeCanvas()
+    {
+        var small = new HexDocument(16, 16);
+        Assert.Equal(HexDocument.MaximumLayers, small.MaximumLayersForThisCanvas);
+        var large = new HexDocument(2000, 1000);
+        Assert.InRange(large.MaximumLayersForThisCanvas, 1, HexDocument.MaximumLayers);
+        Assert.True((long)large.MaximumLayersForThisCanvas * large.CellCount * sizeof(uint) <= HexDocument.MaximumCellBytes);
+        large.ValidateLayerCount(large.MaximumLayersForThisCanvas);
+        if (large.MaximumLayersForThisCanvas < HexDocument.MaximumLayers)
+            Assert.Throws<InvalidOperationException>(() => large.ValidateLayerCount(large.MaximumLayersForThisCanvas + 1));
+    }
+
+    [Fact]
+    public void EditingReportsOnlyTheCellsItTouchedAsDirty()
+    {
+        var session = new EditorSession(new HexDocument(40, 32));
+        Assert.Null(session.TakeDirtyCells());
+        session.Paint(HexGeometry.FromOffset(5, 6, HexOrientation.PointyTop), 0xFF112233);
+        session.EndStroke();
+        var dirty = session.TakeDirtyCells();
+        Assert.NotNull(dirty);
+        Assert.Equal((5, 6, 5, 6), (dirty!.Value.MinColumn, dirty.Value.MinRow, dirty.Value.MaxColumn, dirty.Value.MaxRow));
+        // Taking it forgets it, so the canvas is not told twice.
+        Assert.Null(session.TakeDirtyCells());
+        // Undo puts cells back, which is a change the canvas has to be told about as well.
+        session.Undo();
+        Assert.NotNull(session.TakeDirtyCells());
+    }
+
+    [Fact]
+    public void AnOpaqueCellOnAnOpaqueLayerCompositesToItself()
+    {
+        // The fast path added for compositing large canvases has to agree with the arithmetic it skips.
+        Assert.Equal(0xFF112233u, ColorMath.Over(0xFF112233u, 0xFF445566u));
+        Assert.Equal(0xFF445566u, ColorMath.Over(0x00112233u, 0xFF445566u));
+        Assert.Equal(ColorMath.Over(0x80112233u, 0xFF445566u, 255), ColorMath.Over(0x80112233u, 0xFF445566u));
     }
 
     [Fact]
