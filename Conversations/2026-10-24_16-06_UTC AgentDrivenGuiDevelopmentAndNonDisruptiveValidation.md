@@ -125,3 +125,54 @@ I listed the clipboard as per-desktop. It is not -- the clipboard and the atom t
 ### Whether it is worth it for this app
 
 Probably not yet. A second desktop earns its complexity when you need a real foreground: blocking modal dialogs, activation and focus logic, genuine `SendInput` gestures, drag and drop. The offscreen `HwndSource` already beats it for everything else, because it runs in-process where assertions can touch `session` and the real controls directly instead of inferring from pixels. Driving real pointer input through the existing host closes a much larger hole for much less work. Keep the second desktop in reserve for the day a check genuinely needs to be the foreground window.
+
+## User
+
+okay, this is all interesting, but i don't have time to dive into it now. what i basically need is for you or any agent to be able to develop this app without disrupting me, with these points:
+
+* the machine will always be awake
+* windows may be unlocked or locked
+* the NE18NZ2 display can output anything. i don't use it at all so i don't care what's being shown on it. however, i don't want any disruptions to what the non-NE18NZ2 displays are outputting.
+* displaying something, even briefly, on non-NE18NZ2 displays is unacceptable because even having something shown for a split second is like a distracting flashbang for me, and it's possible that i might click into whatever you launched and then that steals focus from what i was using.
+* the main disruption i'm concerned about is regarding input and window focus. when i'm in the midst of typing or any kind of input (mouse, gamepad, etc), and focus is stolen away, that is an unacceptable disruption. whatever the agent does, it must ensure that this doesn't happen
+
+
+i'm going to lock the machine without putting it to sleep and step away for a couple of hours. for this prompt only, you may use non-NE18NZ2 displays. your job is to ensure the agent development workflow meets all my requirements so that when i return, i can simultaneously use the machine while having agents develop this app without having to worry that the agent dev will disrupt my usage.
+
+## Assistant
+
+The workflow is now one command, `pwsh -File ./Scripts/Validate.ps1`, and it is enforced rather than merely intended.
+
+### What was found
+
+The harness that existed was not actually safe to run on a machine in use, and the only reason to believe otherwise was that nobody had checked. Watching a run with `SetWinEventHook` showed three things reaching the user, all from the hidden rendering host that was assumed harmless because its window sits offscreen at -30000,-30000:
+
+| What happened                              | When      | Why                                                                        |
+| ------------------------------------------ | --------- | -------------------------------------------------------------------------- |
+| The hidden host took the foreground        | 2899 ms   | A WPF window can still be activated while placed offscreen                 |
+| It captured the real mouse                 | 3136 ms   | A WPF menu holds mouse capture so it can tell when to close itself          |
+| A popup became visible at 0,0 on primary   | 3266 ms   | A submenu is its own window, and it opens where the menu is, not offscreen  |
+
+The third one is exactly the split-second flash that was called unacceptable, and it happened on every verification run.
+
+### What it rests on now
+
+The hidden host runs on a Win32 desktop of its own. A desktop owns its windows and its input state, and only one desktop per window station is displayed and fed by the keyboard at a time; one created for a run is never that one. So its windows cannot appear on a display, cannot take the foreground, and cannot reach the keyboard, whatever the program does. That is structural rather than careful.
+
+Then the whole run is watched and fails if it disturbed anything: a window becoming visible off NE18NZ2 even for one frame, moving onto a user display, taking the foreground, capturing the mouse, or confining the cursor. `SetWinEventHook` is used rather than polling because it records the moment a window gains WS_VISIBLE together with the bounds it had then; a window shown and moved between two samples would slip past a sampler. The watch is also what caught the three problems above, and a negative control confirmed it objects when the editor is launched the ordinary way, so a clean report means something.
+
+Three smaller holes were closed in the application: Windows Error Reporting is suppressed for these runs, so a crash cannot put a dialog on a user display; the validation window is kept out of the taskbar, so there is no button to appear or flash there, which is how Windows answers a refused activation; and the menu check no longer depends on mouse capture.
+
+### Locked and unlocked
+
+Both work, and nothing is skipped in either. Verified by locking the machine and running the same validation: build, tests, hidden-host checks and the NE18NZ2 capture all passed, and the capture came back as real content at 3840 x 2400 rather than black. The watch was confirmed to still detect violations while locked, so a regression cannot pass by hiding behind the lock screen.
+
+One assumption of mine was wrong and is worth recording. A locked Windows 11 session draws its lock screen on the `Default` desktop and only switches to `Winlogon` for the credential prompt, so the input desktop still reads as `Default` while the machine is locked. `LockWorkStation` followed by a read of the input desktop proved it: the name never changed. The lock state comes from the session flags instead, and "is the session locked" and "is this desktop the one being displayed" are now answered separately, because they decide different things.
+
+### What this costs
+
+One check is weaker on a desktop of its own: with no foreground window there is no mouse capture, so a WPF menu will not stay open through its menu item, and the submenu is opened directly and measured instead. The report says which path was taken, so the fallback is visible rather than silent, and `Verify.ps1` fails if the weak path is used where the strong one should have worked. `-SameDesktop` keeps the stronger check for a machine nobody is using. This is the right trade: the fidelity being given up is exactly what caused the disruption.
+
+### Still open
+
+The pointer pipeline is still untested. `VerifyEditor` calls `session.Paint` directly, so `HexCanvas`'s pointer handling, the screen-point-to-hex mapping and mouse capture are never exercised, and painting is what this application is. A desktop of its own is the place to drive real input, since capture and activation there cannot reach anyone. Screenshots are also still not compared against committed baselines.
