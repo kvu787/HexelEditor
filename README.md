@@ -25,7 +25,7 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
 - Compressed `.hexel` projects and transparent PNG and SVG export.
 
-The current release supports up to 32 layers, 2,200,000 hexels with neither side over 2048, and 512 palette colors, 256 of which a new project starts with. A 2000 by 1000 canvas is within that and is the size the editor is built to stay responsive at. Layers are limited further on a large canvas by a 256 MB budget for cell data. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
+The current release supports up to 32 layers, 2,200,000 hexels with neither side over 2048, and 512 palette colors, 256 of which a new project starts with. A 2000 by 1000 canvas is within that and is the size the editor is built to stay responsive at. Layers are limited further on a large canvas by a 256 MB budget for cell data. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. A painting command records the cells it changed, and a structural one - a layer added, hidden, renamed, reordered or made see-through, a palette colour, the canvas background - records the structure only and shares the cells, so neither grows with the size of the canvas. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
 
 ## Drawing a large canvas
 
@@ -50,6 +50,8 @@ Measured on this machine, drawing into a 990 by 812 window, before and after:
 | 2000 x 1000 | 2,000,000 | about 3 s to 6.71 ms | about 18 to 30 ms to 4.81 ms |
 
 Across every zoom at 2000 by 1000 the slowest frame is about 19 ms, where cells are between 3 and 8 pixels and tens of thousands of them are on screen at once. Everything else is between 5 and 12 ms.
+
+Structural changes were the other thing that did not scale. Recording one copied every cell twice, so on a 2000 by 1000 canvas with three layers a palette colour cost about 12 ms and an undo of it about 6 ms, and at 16 MB an entry the 64 MiB history budget held only four of them. A structural change cannot alter a cell, so its record now shares them: about 1 ms to make and 0.76 ms to undo, and the budget counts what it actually holds. Sharing is safe because history is undone in order, so reaching a structural record means every painting command made after it has already been undone.
 
 Export is unaffected by any of this: it draws the exact outline, and takes as long as it takes.
 
