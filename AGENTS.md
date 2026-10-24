@@ -93,3 +93,19 @@ Assume that the only display that is never used by the user is NE18NZ2, which me
 If possible, never steal focus away from the user onto stuff that you launch.
 
 After changing a runnable application, open it on NE18NZ2 and validate the change yourself as part of finishing the work. Don't ask for permission to open it, and don't ask whether the result looks right. Report what you verified and what you could not.
+
+### Rules for validating this application
+
+Assume the machine is in use and may be locked or unlocked. Both work; nothing here depends on which.
+
+Run `pwsh -File ./Scripts/Validate.ps1`. That is the only way to check your own work on the editor. It builds, runs the tests, drives the real interface in a hidden host, puts the real window on NE18NZ2, and watches the whole run for anything that would disturb whoever is at the machine. It exits non-zero if a window of the run became visible off NE18NZ2 even for one frame, moved onto a user display, took the foreground, captured the mouse, or confined the cursor. Read the report it points at and say what passed.
+
+Do not reach for `Run.ps1`, `Verify.ps1` or `HexelEditor.exe` directly while the machine may be in use, and do not pass `-SameDesktop`. An offscreen window is not enough on the displayed desktop: the hidden host takes the foreground, the menu check captures the real mouse, and the submenu's popup appears at the top left of the primary display. `Validate.ps1` runs the hidden host on a Win32 desktop of its own, where none of that can reach anyone.
+
+These are hard rules, so build new checks to fit them:
+
+- Never call `SetForegroundWindow`, `Activate`, `Focus`, `BringIntoView`, `Topmost`, or `SwitchDesktop` in a validation path, and never inject input with `SendInput` on the displayed desktop. Gate anything that focuses on `App.KeepFocusAway`.
+- Never show a window without placing it first. Place it from `SourceInitialized`, which runs after the handle exists and before the window is made visible, so it never appears anywhere else on the way.
+- Keep validation windows out of the taskbar, so there is no button to appear or flash on the user's taskbar.
+- Leave the system clipboard alone. A desktop of its own does not get its own clipboard; that belongs to the window station.
+- A check that needs a real foreground, a modal dialog, or genuine mouse capture belongs on the editor's own desktop in `Validate.ps1`, not on the displayed one.

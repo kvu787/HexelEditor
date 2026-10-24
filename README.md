@@ -58,29 +58,42 @@ Install the .NET 10 x64 SDK and PowerShell 7 if they are not already available. 
 ```powershell
 pwsh -File ./Build.ps1
 pwsh -File ./Scripts/Test.ps1
+pwsh -File ./Scripts/Validate.ps1
 pwsh -File ./Scripts/Verify.ps1
 pwsh -File ./Scripts/Publish.ps1
 ```
 
 - Build compiles the complete solution in Release mode with warnings treated as errors.
 - Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, lays out the palette grid and chooses and adds a color through its real controls, and checks session logging. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Validate is the entry point to use while someone is working on this machine, and the one an agent should use. It runs Verify, puts the real window on the validation display, and watches the whole run for anything that would disturb whoever is at the keyboard. See "Validating without disturbing anyone" below.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, lays out the palette grid and chooses and adds a color through its real controls, and checks session logging. It asserts that every check reported, so an application that exits early cannot pass by silence. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
 
-### Checking the editor on a physical display
+### Validating without disturbing anyone
 
-Verify covers behavior without a display. To see the real interface at real pixel density while someone is using the machine, the editor can be put on a display it will not take the keyboard away from:
+The editor is developed with agents on a machine that someone is using at the same time. One display, `NE18NZ2`, is set aside for validation and may show anything. Every other display belongs to the user, and nothing may appear there even for a single frame, nor may anything take the keyboard. Both states of the machine are supported: locked and unlocked behave the same, and no check is skipped in either.
 
 ```powershell
-pwsh -File ./Run.ps1 -Display NE18NZ2
-pwsh -File ./Scripts/CaptureWindow.ps1 -OutputPath ./LogOutput/Editor.png
+pwsh -File ./Scripts/Validate.ps1
 ```
 
-`-Display` fills the named monitor and starts the window without activating it: it is placed before its first frame, so it never appears on another display first, it carries `WS_EX_NOACTIVATE`, and the editor skips the focus calls it normally makes while loading. `CaptureWindow.ps1` photographs it with `PrintWindow`, which asks the window to draw itself and so needs neither the foreground nor an unobstructed view, and it fails if the foreground moved while it worked. Without `-Display` the editor opens normally, in front.
+That is the entry point. It builds, runs the tests, drives the real interface in a hidden rendering host, puts the real window on `NE18NZ2`, photographs it, and exits non-zero if the run disturbed the machine. Each run writes `Validation.txt`, `Validation.json`, the captured window, and the verification output to a timestamped folder under `LogOutput`. `-SkipDisplayPass` leaves out the only step that uses a display; `-Display` names a different one.
 
-This pass is look-only. Reading the automation tree is safe, but `InvokePattern.Invoke` activates the window whatever the control does, so clicking belongs in the hidden host, where Verify raises the events on the real controls instead.
+Two things make it safe, and the second is the one that matters.
+
+**Everything is built to stay out of the way.** The checks that drive the interface run in a hidden host with no window on any display. The window that does appear is placed from `SourceInitialized`, which runs after its handle exists and before it is made visible, so it never appears anywhere else on the way to `NE18NZ2`. It carries `WS_EX_NOACTIVATE`, so it cannot be given the foreground by any amount of focusing or stray clicking, it is kept out of the taskbar so there is no button to appear or flash there, and the editor skips the focus calls it normally makes while loading. `PrintWindow` with `PW_RENDERFULLCONTENT` asks the window to draw itself, so photographing it needs neither the foreground nor an unobstructed view. Windows Error Reporting is suppressed for these runs, so a crash cannot put a dialog on a user display; the session log and the exit code carry the diagnosis instead.
+
+**The whole run is watched, and a run that disturbed the machine fails.** Care is an intention; the watch is evidence. `SetWinEventHook` records the moment any window gains `WS_VISIBLE` together with the bounds it had at that moment, which polling cannot promise, because a window shown and then moved between two samples would slip through. A sampler follows the foreground window and the cursor clip alongside it. The run fails, naming the window, if one of its windows became visible outside `NE18NZ2`, moved onto a user display, took the foreground, captured the mouse, or confined the cursor.
+
+The watch was worth building: it showed that an offscreen window is not enough on the desktop being displayed. There the hidden host takes the foreground, the menu check captures the real mouse, and the submenu's own popup window becomes visible at the top left of the primary display. So the hidden host runs on a Win32 desktop of its own. A desktop owns its windows and its input state, and only one desktop per window station is displayed and fed by the keyboard at a time; one created for a validation run is never that one, so a window there cannot appear on a display, take the foreground, or reach the user's keyboard whatever the program does.
+
+That trade costs one thing, and it is recorded rather than hidden. A desktop that is not the input desktop has no foreground window, and mouse capture needs one, so a WPF menu will not stay open through its menu item there. The submenu is opened directly and measured instead, and the report says which path was taken: the fallback is correct without an input desktop and a defect with one. `Validate.ps1 -SameDesktop` runs the host on the displayed desktop for the stronger menu check, and is only for a machine nobody is using.
+
+Reading the automation tree of the window on `NE18NZ2` is safe, but `InvokePattern.Invoke` activates the window whatever the control does, so clicking belongs in the hidden host, where the events are raised on the real controls instead.
+
+Two details about Windows worth keeping in mind here. A locked Windows 11 session draws its lock screen on the `Default` desktop and only switches to `Winlogon` for the credential prompt, so the input desktop still reads as `Default` while the machine is locked; the lock state comes from the session flags, and the two questions are answered separately. And a desktop does not get its own clipboard, because the clipboard belongs to the window station, so validation leaves the system clipboard alone.
 
 ## Session logs
 
@@ -92,7 +105,7 @@ Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root,
 - `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, Skia canvas, and image exporters. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control. Cells that share a color are filled as one path, and every cell reaches a fraction of a pixel past its edges, so neighbors overlap rather than meet and no background shows between them when the grid is off.
 - `Tests/HexelEditor.Tests`: xUnit tests for the editing core.
 - `Build.cmd` / `Build.ps1` and `Run.cmd` / `Run.ps1`: repository-root build and run entry points. Run launches a copy of the build so that editing and building the repository never wait on a running editor.
-- `Scripts`: shared PowerShell helpers, tests, verification, and publishing. The shared helper requires PowerShell 7 or later.
+- `Scripts`: shared PowerShell helpers, tests, verification, validation, and publishing. The shared helper requires PowerShell 7 or later. `Validate.ps1` is the entry point for checking a change; `DisruptionGuard.ps1` watches a run for interference and answers what the session state is, `IsolatedDesktop.ps1` runs a process on a Win32 desktop of its own, and `Windowing.ps1` measures displays, finds a process's window, and photographs one without activating it.
 - `Documentation`: images used by this file.
 - `Examples`: the saved example project.
 - `Conversations`: the verbatim conversation history required by `AGENTS.md`.
