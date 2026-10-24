@@ -104,9 +104,19 @@ row-major order.
 pwsh -File ./Test.ps1
 ```
 
-or double-click `Test.cmd`. Add `-Measure` to also time the generator at increasing sizes, up to
-two million cells, which takes several minutes. Output lands in a timestamped folder under
-`LogOutput`.
+or double-click `Test.cmd`. Output lands in a timestamped folder under `LogOutput`.
+
+| Switch      | What it adds                                                                     |
+| ----------- | -------------------------------------------------------------------------------- |
+| `-Measure`  | Times the generator at increasing sizes, up to two million cells. Several minutes. |
+| `-InEditor` | Runs the script through Blender's Text Editor in a real window, and screenshots it. |
+
+`-InEditor` covers what the automated tests cannot. They reach the generator with `exec`, which
+is close to how Blender runs a script but not the same path: it does not go through
+`bpy.ops.text.run_script`, a text datablock, or a real window with a depsgraph and a viewport
+behind it. The window is placed on a display nobody is working on -- `NE18NZ2` on this machine,
+overridable with `-MonitorName`, falling back to the largest non-primary display -- and opened
+with `--no-window-focus`, so it never takes the foreground.
 
 [TestHexGrid.py](TestHexGrid.py) runs the real script text with only its settings constants
 rewritten, so what is tested is the file you would paste rather than a copy of its logic. The
@@ -123,4 +133,5 @@ re-implementation would still be caught.
 | [TestHexGrid.py](TestHexGrid.py)           | Correctness tests, run inside Blender.                          |
 | [MeasureHexGrid.py](MeasureHexGrid.py)     | Times and measures one grid size, driven by environment vars.   |
 | [RenderPreview.py](RenderPreview.py)       | Renders the preview image above, with the axes drawn in.        |
-| [Test.ps1](Test.ps1)                       | Runs the tests, and the measurements with `-Measure`.           |
+| [ValidateInEditor.py](ValidateInEditor.py) | Runs the script through a real Blender window's Text Editor.    |
+| [Test.ps1](Test.ps1)                       | Runs all of the above. See the switches under Tests.            |
