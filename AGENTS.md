@@ -109,4 +109,7 @@ These are hard rules, so build new checks to fit them:
 - Keep validation windows out of the taskbar, so there is no button to appear or flash on the user's taskbar.
 - Leave the system clipboard alone. A desktop of its own does not get its own clipboard; that belongs to the window station.
 - A check that needs a real foreground, a modal dialog, or genuine mouse capture belongs on the editor's own desktop in `Validate.ps1`, not on the displayed one.
-- Check pointer behavior by driving the pointer, through `PointerInput`, not by calling a handler or raising `MouseDown`. Raising an event skips hit testing, and a hand-made `MouseEventArgs` reports the physical pointer's position rather than the one it was given. Never inject input with `SendInput`: that goes to whichever desktop is being displayed, which is the user's.
+- Check pointer behavior by driving the pointer, through `PointerInput`, not by calling a handler or raising `MouseDown`. Raising an event skips hit testing, and a hand-made `MouseEventArgs` reports the physical pointer's position rather than the one it was given.
+- Check shortcuts by striking the keys, through `KeyboardInput`. Never inject input with `SendInput`: it only feeds the desktop being displayed, so it does nothing on a desktop of its own and would type into the user's session on theirs.
+- Keep pointer checks before keyboard checks, and do not take the Win32 focus. Giving WPF a keyboard focus makes it re-read the pointer position from a desktop that has no cursor, after which driven pointer moves stop working for the rest of the run.
+- Do not add a check that opens a modal dialog, including `Ctrl+N`, `Ctrl+O` and `Ctrl+S`. Nothing can answer it and the run will hang until it times out.

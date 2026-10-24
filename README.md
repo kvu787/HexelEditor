@@ -103,6 +103,16 @@ This is why the hidden host is marked visible despite never being shown. WPF hit
 
 A check that fails after driving the pointer ends the process instead of asking WPF to shut down, because a shutdown from mid-gesture hung until the timeout and buried the reason. Failures report in about five seconds.
 
+### Driving the keyboard
+
+The shortcut table is struck rather than called. Keys go to the host window as key messages, and the modifiers are genuinely held down, so `OnKeyDown` reads the modifier state it would read under a hand. Covered: all seven tool keys, the brush and grid keys, `Space` held and released so `OnKeyUp` is reached as well, and `Ctrl+A`, `Ctrl+D`, `Ctrl+Z` and `Ctrl+Shift+Z`. Nothing there opens a dialog or touches the clipboard: `Ctrl+N`, `Ctrl+O` and `Ctrl+S` would wait on a modal window nobody can answer, and the clipboard belongs to the window station, which is shared with whoever is using the machine.
+
+Holding the modifiers takes explaining. A shortcut is read through `Keyboard.Modifiers`, which WPF answers by asking the operating system whether Control is down, and a key message does not change that state, so Control would never be held. The obvious answer, injecting input with `SendInput`, cannot be used: injected input only ever feeds the desktop being displayed, and answers `ERROR_ACCESS_DENIED` from anywhere else, so it does nothing on a desktop of its own and would type into someone's session on the displayed one. `SetKeyboardState` is the way through, because it changes the calling thread's key state only, which is the state WPF reads; nothing outside the process can see it, and the messages go to one window this process owns.
+
+WPF's own focus is enough to route keys, and taking the Win32 focus is actively harmful: it makes WPF work out afresh where the pointer is by asking the system, and on a desktop that is not displayed there is no cursor to report, so it settles on a position outside the window and stops accepting driven pointer moves for good. That is why the pointer checks run before the keyboard ones, and why the stroke these keys undo is made through the session rather than with the pointer.
+
+The shortcut handlers are on the content root as well as on the window, because validation hosts the window's content without the window, and a tunneling event would otherwise never pass through them. The window still receives a key first and marks it handled, so nothing about the editor's behavior changes; the content root matters only where there is no window.
+
 Two details about Windows worth keeping in mind here. A locked Windows 11 session draws its lock screen on the `Default` desktop and only switches to `Winlogon` for the credential prompt, so the input desktop still reads as `Default` while the machine is locked; the lock state comes from the session flags, and the two questions are answered separately. And a desktop does not get its own clipboard, because the clipboard belongs to the window station, so validation leaves the system clipboard alone.
 
 ## Session logs
