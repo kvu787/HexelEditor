@@ -1,4 +1,11 @@
-param([ValidateSet('Debug', 'Release')][string] $Configuration = 'Release', [string] $Project, [string] $Display)
+param(
+    [ValidateSet('Debug', 'Release')][string] $Configuration = 'Release',
+    [string] $Project,
+    [string] $Display,
+    # Returns the started process instead of describing the launch, so that a validation run can follow and
+    # capture exactly the editor it started rather than whichever one happens to be open.
+    [switch] $PassThru
+)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Scripts/Common.ps1')
@@ -23,6 +30,7 @@ if ($Project) {
     $arguments += '"' + $projectFile + '"'
 }
 if ($arguments.Count -gt 0) { $startParameters.ArgumentList = $arguments -join ' ' }
-Start-Process @startParameters
+$process = Start-Process @startParameters -PassThru
+if ($PassThru) { return $process }
 if ($Display) { Write-Output "Started on $Display ($($bounds.Width) x $($bounds.Height) at $($bounds.X),$($bounds.Y)) without taking focus." }
 Write-Output "Started: $($startParameters.FilePath)"

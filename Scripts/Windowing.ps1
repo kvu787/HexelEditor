@@ -15,6 +15,31 @@ using System.Runtime.InteropServices;
 public static class NativeWindowing
 {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr handle, out int processId);
+    public delegate bool EnumWindowsProc(IntPtr handle, IntPtr parameter);
+
+    // Process.MainWindowHandle only answers for a visible top-level window that has no owner, and a window
+    // kept out of the taskbar is given one, so it reports nothing for the editor during validation. Looking
+    // for the largest visible window of the process finds it whether or not it owns a taskbar button.
+    public static IntPtr FindProcessWindow(int processId)
+    {
+        IntPtr best = IntPtr.Zero;
+        long bestArea = 0;
+        EnumWindows(delegate (IntPtr handle, IntPtr parameter)
+        {
+            int owner;
+            GetWindowThreadProcessId(handle, out owner);
+            if (owner != processId || !IsWindowVisible(handle)) return true;
+            Rect bounds;
+            if (!GetWindowRect(handle, out bounds)) return true;
+            long area = (long)(bounds.Right - bounds.Left) * (bounds.Bottom - bounds.Top);
+            if (area > bestArea) { bestArea = area; best = handle; }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr handle, out Rect bounds);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr handle, IntPtr deviceContext, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr handle, System.Text.StringBuilder text, int count);
@@ -80,12 +105,49 @@ function Assert-ForegroundUnchanged {
     }
 }
 
+# Prefer ProcessId. Looking a window up by process name would find whichever editor happens to be open,
+# including one the user started for themselves, and a validation pass must never reach into that.
 function Get-WindowHandle {
-    param([string] $ProcessName = 'HexelEditor')
-    $process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
-        Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-    if (-not $process) { throw "No window is open for $ProcessName." }
-    $process.MainWindowHandle
+    param([string] $ProcessName = 'HexelEditor', [int] $ProcessId = 0, [int] $TimeoutMilliseconds = 0)
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    do {
+        if ($ProcessId -ne 0) {
+            $handle = [NativeWindowing]::FindProcessWindow($ProcessId)
+            if ($handle -ne [IntPtr]::Zero) { return $handle }
+        }
+        else {
+            $process = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+                Where-Object { [NativeWindowing]::FindProcessWindow($_.Id) -ne [IntPtr]::Zero } | Select-Object -First 1
+            if ($process) { return [NativeWindowing]::FindProcessWindow($process.Id) }
+        }
+        if ([DateTime]::UtcNow -ge $deadline) { break }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
+    $which = if ($ProcessId -ne 0) { "process $ProcessId" } else { $ProcessName }
+    throw "No window is open for $which."
+}
+
+# A capture taken from a window that cannot draw comes back as one flat color rather than as an error, so a
+# run that depends on a picture has to look at whether the picture holds anything.
+function Test-ImageHasContent {
+    param([Parameter(Mandatory)][string] $Path, [int] $MinimumColors = 8)
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = [System.Drawing.Bitmap]::FromFile((Resolve-Path -LiteralPath $Path).Path)
+    try {
+        $colors = @{}
+        $step = [Math]::Max(1, [int]([Math]::Min($bitmap.Width, $bitmap.Height) / 40))
+        for ($y = 0; $y -lt $bitmap.Height; $y += $step) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += $step) { $colors[$bitmap.GetPixel($x, $y).ToArgb()] = 1 }
+        }
+        [PSCustomObject]@{
+            Path = $Path
+            Width = $bitmap.Width
+            Height = $bitmap.Height
+            DistinctColors = $colors.Count
+            HasContent = $colors.Count -ge $MinimumColors
+        }
+    }
+    finally { $bitmap.Dispose() }
 }
 
 # PrintWindow asks the window to draw itself, so it works while the window sits behind others and unfocused.
