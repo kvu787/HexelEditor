@@ -84,9 +84,9 @@ if ($missing.Count -gt 0) { throw "The verification report is missing: $($missin
 # A menu needs mouse capture, which needs a foreground window, which only the input desktop has. So the
 # weaker path is expected exactly when this run had no input desktop, and is a defect otherwise.
 $usedFallback = $reportText -like '*submenu opened directly*'
-$withoutInputDesktop = $locked -or -not $SameDesktop
+$withoutInputDesktop = (-not $SameDesktop) -or (-not (Test-HasInputDesktop))
 if ($usedFallback -and -not $withoutInputDesktop) {
-    throw 'The File menu did not open through its menu item on an unlocked session, which it should.'
+    throw 'The File menu did not open through its menu item while running on the displayed desktop, which it should.'
 }
 if (-not $usedFallback -and $withoutInputDesktop) {
     Write-Warning 'The File menu opened through its menu item without an input desktop, which was not expected. The check is stronger than assumed, not weaker.'

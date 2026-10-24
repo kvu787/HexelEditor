@@ -263,10 +263,45 @@ public sealed class DisruptionWatcher
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr window, StringBuilder text, int count);
 }
 
-// A locked session moves the input desktop to Winlogon. Nothing that needs a window on screen can work
-// there, so a run has to know which state it is in rather than reporting a black picture as a success.
+// Two different questions, and conflating them gives the wrong answer on Windows 11.
+//
+// Is the session locked? Windows 11 draws its lock screen on the Default desktop and only switches to
+// Winlogon for the credential prompt, so the input desktop still reads as Default while the machine is
+// locked. The session flags are what actually say, and they say a locked session is worth knowing about
+// because a picture taken of a window may not be worth trusting.
+//
+// Is this desktop the one being displayed? That is the input desktop, and it is a separate matter. Only a
+// window there has a foreground to take or mouse capture to hold, which is what the parts of WPF that need
+// capture depend on. A desktop created for a validation run is never the input desktop, whatever the lock
+// state is.
 public static class SessionState
 {
+    private const int SessionInfoEx = 25;
+    private const int SessionFlagsOffset = 16;
+    private const int Locked = 0;
+
+    public static bool IsSessionLocked()
+    {
+        IntPtr buffer;
+        int bytes;
+        int session = WTSGetActiveConsoleSessionId();
+        if (!WTSQuerySessionInformationW(IntPtr.Zero, session, SessionInfoEx, out buffer, out bytes))
+            return !HasInputDesktop();
+        try
+        {
+            // WTSINFOEXW is a level, then a union whose member starts with the session id at offset 8, the
+            // connect state, and then the session flags.
+            if (bytes < SessionFlagsOffset + 4) return !HasInputDesktop();
+            return Marshal.ReadInt32(buffer, SessionFlagsOffset) == Locked;
+        }
+        finally { WTSFreeMemory(buffer); }
+    }
+
+    public static bool HasInputDesktop()
+    {
+        return string.Equals(InputDesktopName(), "Default", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static string InputDesktopName()
     {
         IntPtr desktop = OpenInputDesktop(0, false, 0x0001);
@@ -281,11 +316,9 @@ public static class SessionState
         finally { CloseDesktop(desktop); }
     }
 
-    public static bool IsLocked()
-    {
-        return !string.Equals(InputDesktopName(), "Default", StringComparison.OrdinalIgnoreCase);
-    }
-
+    [DllImport("wtsapi32.dll", SetLastError = true)] private static extern bool WTSQuerySessionInformationW(IntPtr server, int session, int infoClass, out IntPtr buffer, out int bytes);
+    [DllImport("wtsapi32.dll")] private static extern void WTSFreeMemory(IntPtr memory);
+    [DllImport("kernel32.dll")] private static extern int WTSGetActiveConsoleSessionId();
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool GetUserObjectInformationW(IntPtr handle, int index, [Out] byte[] info, int bytes, out int needed);
     [DllImport("user32.dll")] private static extern bool CloseDesktop(IntPtr handle);
@@ -293,7 +326,10 @@ public static class SessionState
 '@
 }
 
-function Test-SessionLocked { [SessionState]::IsLocked() }
+function Test-SessionLocked { [SessionState]::IsSessionLocked() }
+
+# Whether this desktop is the one being displayed and fed by the keyboard. Separate from the lock state.
+function Test-HasInputDesktop { [SessionState]::HasInputDesktop() }
 
 function Get-InputDesktopName { [SessionState]::InputDesktopName() }
 
