@@ -131,7 +131,14 @@ public partial class MainWindow : Window
 
     private void SessionChanged(EditorChange change)
     {
-        if ((change & EditorChange.Structure) != 0) RefreshPanels();
+        if ((change & EditorChange.Structure) != 0)
+        {
+            RefreshPanels();
+            // A structural change is anything that alters what a cell looks like without altering the cell:
+            // a layer hidden, reordered or made see-through, a new canvas background, an undo of any of them.
+            // The canvas keeps composited colour in a raster, so all of it is stale.
+            EditorCanvas.InvalidateArtwork();
+        }
         EditorCanvas.InvalidateVisual(); UpdateHeader();
     }
 
@@ -760,6 +767,67 @@ public partial class MainWindow : Window
         if (session.IsDirty) throw new InvalidOperationException("The keyboard checks left the document unsaved.");
         File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
             $"Keyboard input: {tools.Length} tool keys, brush and grid keys, Space held and released, Ctrl+A, Ctrl+D, Ctrl+Z and Ctrl+Shift+Z verified through real key messages with the modifiers really held\n");
+    }
+
+    // The three ways the canvas draws cells, each checked where it is actually used. A large canvas is drawn
+    // at the zoom it is drawn at, and a cell's colour has to land where that cell is: the raster has its own
+    // mapping back to the artwork's coordinates and the mesh has its own corner arithmetic, so either could
+    // put the artwork in the wrong place without anything else noticing.
+    public void VerifyRenderTiers(string folder)
+    {
+        const int width = 400, height = 200;
+        var document = new HexDocument(width, height);
+        var layer = document.Layers[0];
+        // Four quadrants of flat colour, so where each one lands says whether the geometry is right.
+        var quadrants = new uint[] { 0xFF1E89DA, 0xFF2FC866, 0xFFE4D114, 0xFFD5236C };
+        for (var row = 0; row < height; row++)
+            for (var column = 0; column < width; column++)
+                layer.Cells[row * width + column] = quadrants[(row < height / 2 ? 0 : 2) + (column < width / 2 ? 0 : 1)];
+
+        using var cache = new ArtworkCache();
+        var checks = new List<string>();
+        const int side = 600;
+        foreach (var cellPixels in new[] { 1.5f, 5f, 10f, 20f })
+        {
+            var zoom = cellPixels / (float)(Math.Sqrt(3) * ArtworkRenderer.CellRadius);
+            var detail = ArtworkRenderer.DetailFor(cellPixels, true);
+            // A point a quarter and three quarters of the way along each axis sits well inside one quadrant,
+            // far enough from a boundary that filtering cannot carry a neighbour's colour into it. The view is
+            // placed to put that cell at the middle of the surface, so this works at any zoom, including the
+            // ones where the canvas is far larger than the window, which is the case that matters.
+            for (var quadrant = 0; quadrant < 4; quadrant++)
+            {
+                var column = quadrant % 2 == 0 ? width / 4 : width * 3 / 4;
+                var row = quadrant < 2 ? height / 4 : height * 3 / 4;
+                var (x, y) = HexGeometry.Center(HexGeometry.FromOffset(column, row, document.Orientation), document.Orientation, ArtworkRenderer.CellRadius);
+                using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo(side, side))
+                    ?? throw new InvalidOperationException("Could not create the render tier surface.");
+                surface.Canvas.Clear(SkiaSharp.SKColors.White);
+                surface.Canvas.Translate(side / 2f - (float)x * zoom, side / 2f - (float)y * zoom);
+                surface.Canvas.Scale(zoom);
+                ArtworkRenderer.Draw(surface.Canvas, document, background: true, grid: false, zoom: zoom, cache: cache);
+                using var image = surface.Snapshot();
+                using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
+                var sample = (uint)bitmap.GetPixel(side / 2, side / 2);
+                var expected = quadrants[quadrant];
+                if (!CloseEnough(sample, expected))
+                    throw new InvalidOperationException(
+                        $"Drawing at {detail} detail, {cellPixels} pixels a cell, put {ColorMath.Format(sample)} at cell {column},{row} where {ColorMath.Format(expected)} belongs.");
+            }
+            checks.Add($"{detail} at {cellPixels:0.#} px");
+        }
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
+            $"Render tiers: {string.Join(", ", checks)} verified on a {width} x {height} canvas\n");
+    }
+
+    // Filtering and the raster's two pixels a cell both move a colour slightly, so the check is on being the
+    // right colour rather than the exact bytes. A wrong quadrant is nowhere near.
+    private static bool CloseEnough(uint sample, uint expected)
+    {
+        int Channel(uint color, int shift) => (int)((color >> shift) & 255);
+        return Math.Abs(Channel(sample, 16) - Channel(expected, 16)) <= 24
+            && Math.Abs(Channel(sample, 8) - Channel(expected, 8)) <= 24
+            && Math.Abs(Channel(sample, 0) - Channel(expected, 0)) <= 24;
     }
 
     public void VerifyInterface(string folder)

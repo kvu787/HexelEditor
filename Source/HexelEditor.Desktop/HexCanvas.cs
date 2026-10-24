@@ -14,6 +14,7 @@ public sealed class HexCanvas : SKElement
     private const float MinimumZoom = 0.08f;
     private const float MaximumZoom = 30f;
     private EditorSession? session;
+    private readonly ArtworkCache artwork = new();
     private HexCoordinate? hover;
     private HexCoordinate? start;
     private HexCoordinate? previous;
@@ -47,9 +48,14 @@ public sealed class HexCanvas : SKElement
         Cursor = Cursors.Cross;
     }
 
+    // Anything that changes what a cell looks like without changing the cell: a different document, a layer
+    // hidden or reordered, a new canvas background. The raster holds composited colour, so it is all stale.
+    public void InvalidateArtwork() => artwork.InvalidateEverything();
+
     public void Attach(EditorSession value)
     {
         FinishGesture(); session = value; hover = null; needsFit = true;
+        artwork.InvalidateEverything();
         if (ActualWidth > 0 && ActualHeight > 0) Fit();
         InvalidateVisual();
     }
@@ -93,7 +99,10 @@ public sealed class HexCanvas : SKElement
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
-        ArtworkRenderer.Draw(canvas, session.Document, true, ShowGrid, Zoom);
+        // Drained every frame whatever the zoom, so the raster never misses an edit made while it was not
+        // the thing being drawn.
+        artwork.MarkDirty(session.TakeDirtyCells());
+        ArtworkRenderer.Draw(canvas, session.Document, true, ShowGrid, Zoom, artwork);
         using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
         using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(0, 95, 184, 40) };
@@ -111,15 +120,22 @@ public sealed class HexCanvas : SKElement
             if (cursor) canvas.DrawPath(path, halo);
             canvas.DrawPath(path, outline); canvas.Restore();
         }
-        foreach (var index in session.Selection) Highlight(session.Document.CoordinateAt(index), true);
+        var (minColumn, minRow, maxColumn, maxRow) = ArtworkRenderer.VisibleCells(session.Document, visible);
+        if (session.Selection.Count > 0)
+            for (var row = minRow; row <= maxRow; row++)
+                for (var column = minColumn; column <= maxColumn; column++)
+                {
+                    var index = row * session.Document.Width + column;
+                    if (session.Selection.Contains(index)) Highlight(session.Document.CoordinateAt(index), true);
+                }
         if (drawing && start.HasValue && hover.HasValue && Tool == DrawingTool.Line)
             foreach (var cell in start.Value.LineTo(hover.Value)) Highlight(cell, true);
         if (drawing && start.HasValue && hover.HasValue && Tool == DrawingTool.Rectangle)
         {
             var (columnA, rowA) = HexGeometry.ToOffset(start.Value, session.Document.Orientation);
             var (columnB, rowB) = HexGeometry.ToOffset(hover.Value, session.Document.Orientation);
-            var left = Math.Max(0, Math.Min(columnA, columnB)); var right = Math.Min(session.Document.Width - 1, Math.Max(columnA, columnB));
-            var top = Math.Max(0, Math.Min(rowA, rowB)); var bottom = Math.Min(session.Document.Height - 1, Math.Max(rowA, rowB));
+            var left = Math.Max(minColumn, Math.Min(columnA, columnB)); var right = Math.Min(maxColumn, Math.Max(columnA, columnB));
+            var top = Math.Max(minRow, Math.Min(rowA, rowB)); var bottom = Math.Min(maxRow, Math.Max(rowA, rowB));
             for (var row = top; row <= bottom; row++)
                 for (var column = left; column <= right; column++)
                     if (FilledShapes || row == top || row == bottom || column == left || column == right) Highlight(HexGeometry.FromOffset(column, row, session.Document.Orientation), true);

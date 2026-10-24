@@ -122,6 +122,8 @@ public sealed class NewCanvasDialog : Window
             if (!int.TryParse(widthInput.Text, out var width) || !int.TryParse(heightInput.Text, out var height) ||
                 width is < 1 or > HexDocument.MaximumDimension || height is < 1 or > HexDocument.MaximumDimension)
             { MessageBox.Show(this, $"Enter dimensions between 1 and {HexDocument.MaximumDimension} hexels.", "Canvas size"); return; }
+        if ((long)width * height > HexDocument.MaximumCellCount)
+            { MessageBox.Show(this, $"A canvas holds at most {HexDocument.MaximumCellCount:N0} hexels, and {width} by {height} is {(long)width * height:N0}.", "Canvas size"); return; }
             CanvasWidth = width; CanvasHeight = height; DialogResult = true;
         };
         panel.Children.Add(EditorDialogs.Footer(new Button { Content = "Cancel", IsCancel = true }, create));
