@@ -76,7 +76,9 @@ $expected = @(
     'Flat-top transparent export: passed',
     'Canvas background:',
     'Menu bar and dialogs: passed',
-    'Palette grid:'
+    'Palette grid:',
+    'Pointer input:',
+    'Keyboard input:'
 )
 $missing = @($expected | Where-Object { $reportText -notlike "*$_*" })
 if ($missing.Count -gt 0) { throw "The verification report is missing: $($missing -join '; ')" }
