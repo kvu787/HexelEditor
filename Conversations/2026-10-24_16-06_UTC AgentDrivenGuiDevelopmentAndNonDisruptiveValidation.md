@@ -176,3 +176,48 @@ One check is weaker on a desktop of its own: with no foreground window there is 
 ### Still open
 
 The pointer pipeline is still untested. `VerifyEditor` calls `session.Paint` directly, so `HexCanvas`'s pointer handling, the screen-point-to-hex mapping and mouse capture are never exercised, and painting is what this application is. A desktop of its own is the place to drive real input, since capture and activation there cannot reach anyone. Screenshots are also still not compared against committed baselines.
+
+## User
+
+Yes, drive real pointer input through the WPF input pipeline on the isolated desktop, so hit testing, capture, and drag strokes are covered.
+
+## Assistant
+
+Done, and it passes while the machine is in use. The canvas is now checked by driving the pointer rather than by calling into it.
+
+### Why window messages are the only way
+
+Two easier routes both fail, and the reasons matter:
+
+| Route                            | Why it cannot stand in for input                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Call the handler, or raise `MouseDown` | Skips hit testing, so it passes on a canvas that something covered, that has no size, or that is not hit testable |
+| Build a `MouseEventArgs`         | Cannot carry a position: `GetPosition` asks the mouse device, which answers with wherever the physical pointer is |
+
+So `PointerInput` sends the window messages a mouse sends. The position a message carries is the one WPF then reports, and it arrives through the same input provider a real mouse arrives through, so hit testing, mouse capture and the order of enter, move, down and up are all the real ones.
+
+### The one thing that had to change
+
+The first attempt failed with the pointer landing on nothing. The diagnostic was decisive: WPF reported the pointer at 149.0,416.0, exactly the point aimed at, but `DirectlyOver` was nothing and the foreground window was 0. WPF hit tests pointer input by asking the window manager which window lies at a point, and the window manager only answers with **visible** windows. The hidden host had no `WS_VISIBLE`, so the position arrived correctly and hit nothing.
+
+Marking the host visible fixed it, and costs nothing here: it sits at -30000,-30000, which no monitor covers, and it runs on a desktop that is not displayed. `WS_EX_TOOLWINDOW` keeps it out of the taskbar either way. The watch was taught that a window on no display shows nothing, and that exemption was then checked against the rectangles real runs had recorded: the host off every monitor and the editor on NE18NZ2 come back clear, while the submenu popup at the top left of the primary display, an ordinary launch, and a window overlapping a user display by two pixels are all still violations.
+
+### What is covered
+
+Hit testing from the root, hover tracking, capture taken for a stroke and given back after it, a nine-cell drag that only joins up if the cells between two reported positions are filled in as well, one gesture being one undo however many moves it was made of, right-button erase, and a middle-button pan that moves the canvas without painting.
+
+These run on a blank canvas rather than the example. The first attempt at the erase check asserted the composite was transparent and failed, because the example has three layers and clearing the active one leaves the others showing: that made "did the erase work" a question about compositing instead of about the gesture.
+
+### A hang worth fixing
+
+A check that failed after driving the pointer did not exit. Shutting WPF down from mid-gesture hung until the 120 second timeout, which turned a failed check into a timeout and buried the reason. A failing verification now ends the process outright, with the log already flushed, and reports in about five seconds. Measured with a deliberate failure, then reverted.
+
+### Evidence it did not disturb anything
+
+The final runs happened while the machine was unlocked and in use. The watch recorded 36 window events in the last one, including two `MouseCaptured` events from `msedge`, which is the browser being used at the time. None of them belonged to the run: nothing of the run's became visible off NE18NZ2, nothing took the foreground, and the cursor was never confined.
+
+`-SameDesktop` was deliberately not run this time. Permission to use the other displays was for the previous prompt only, and that path is the one that shows a popup on the primary display.
+
+### Still open
+
+Screenshots are still not compared against committed baselines, so a visual regression would need someone to notice it. Keyboard input is still unchecked: the shortcut table is large and `OnKeyDown` is never exercised, and the same message-driven approach would now cover it.
