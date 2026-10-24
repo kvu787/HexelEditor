@@ -357,6 +357,19 @@ function Register-WatchedProcess {
     $Watch.Watcher.Watch($ProcessId)
 }
 
+# A window that lies on no display at all shows nothing to anyone, whatever its style says. The hidden
+# rendering host is such a window: it is marked visible, because WPF will not hit test pointer input against
+# an invisible window, and parked at coordinates no monitor covers.
+function Test-OnAnyDisplay {
+    param([Parameter(Mandatory)] $Observation)
+    foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+        $bounds = $screen.Bounds
+        if ($Observation.Left -lt $bounds.Right -and $Observation.Right -gt $bounds.Left -and
+            $Observation.Top -lt $bounds.Bottom -and $Observation.Bottom -gt $bounds.Top) { return $true }
+    }
+    return $false
+}
+
 # A window is clear only if all of it lies inside the display set aside for validation. Touching a user
 # display at all counts, because a sliver at the edge of their screen is still something they would see.
 function Test-WithinAllowedDisplay {
@@ -380,7 +393,8 @@ function Stop-DisruptionWatch {
         }
         if (-not $observation.Watched) { continue }
         $where = "$($observation.ProcessName) ($($observation.ProcessId)) window '$($observation.Title)' [$($observation.Class)] at $($observation.Left),$($observation.Top) $($observation.Right),$($observation.Bottom) after $($observation.Milliseconds) ms"
-        $inside = Test-WithinAllowedDisplay -Allowed $Watch.Allowed -Observation $observation
+        $inside = (Test-WithinAllowedDisplay -Allowed $Watch.Allowed -Observation $observation) -or
+                  -not (Test-OnAnyDisplay -Observation $observation)
         switch ($observation.Kind) {
             'WindowShown' { if (-not $inside) { $violations += "A window became visible outside $($Watch.AllowedMonitor): $where" } }
             'WindowMoved' { if (-not $inside) { $violations += "A window moved outside $($Watch.AllowedMonitor): $where" } }
