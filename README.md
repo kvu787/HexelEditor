@@ -15,7 +15,7 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 
 ## Editing
 
-- Pointy-top and flat-top grids, up to 256 columns and 256 rows.
+- Pointy-top and flat-top grids, up to 2048 columns and 2048 rows, and two million hexels in all.
 - Pencil and eraser with hexagonal brushes, connected flood fill, eyedropper, lines, and outlined or filled rectangles.
 - Rectangular selections, cell copying and pasting, movement, and exact 60-degree rotations. Transforms clip at the canvas boundary and can be undone.
 - Layers with names, visibility, locking, opacity, and ordering, each holding its own cells.
@@ -25,7 +25,33 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
 - Compressed `.hexel` projects and transparent PNG and SVG export.
 
-The current release supports up to 32 layers, a 256 by 256 canvas, and 512 palette colors, 256 of which a new project starts with. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
+The current release supports up to 32 layers, 2,200,000 hexels with neither side over 2048, and 512 palette colors, 256 of which a new project starts with. A 2000 by 1000 canvas is within that and is the size the editor is built to stay responsive at. Layers are limited further on a large canvas by a 256 MB budget for cell data. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
+
+## Drawing a large canvas
+
+A canvas of two million cells is thirty times the size the editor first allowed, and the way it was drawn did not scale: every frame walked every cell to ask whether it was on screen, and every cell that was drew its own antialiased path. At 256 by 256 that already cost about 100 ms a frame when the canvas was fitted to the window. At 2000 by 1000 it would have been about three seconds.
+
+Two things changed. The visible span of columns and rows now comes from inverting the layout, so a frame costs what the window shows rather than what the document holds. And how a cell is drawn follows how large it is on screen, because a cell drawn as its own path costs the same whether it covers two hundred pixels or a fifth of one:
+
+| Cell on screen   | Drawn as                                  | Why                                                             |
+| ---------------- | ----------------------------------------- | ---------------------------------------------------------------- |
+| 14 pixels and up | its exact antialiased outline             | few enough to afford, large enough for the shape to be seen       |
+| 7 to 14 pixels   | four triangles, one call per batch        | no path building, and cells meet exactly so there is no seam      |
+| 3 to 7 pixels    | two triangles                             | triangle setup is the cost, and the corners cannot be seen anyway |
+| under 3 pixels   | one scaled blit of the artwork raster     | the shape is sub-pixel, so only the colour and its place matter   |
+
+The raster holds the composited artwork at two pixels a cell, and only the cells that changed are recomposited, so a brush stroke costs the cells it touched. Two pixels rather than one because alternate rows of a hex grid sit half a cell across: at one pixel that offset cannot be stored and the rows would be drawn in the wrong places.
+
+Measured on this machine, drawing into a 990 by 812 window, before and after:
+
+| Canvas      | Cells     | Fitted to the window | At zoom 1.0 |
+| ----------- | --------- | -------------------- | ----------- |
+| 256 x 256   | 65,536    | 101.50 ms to 20.87 ms | 5.81 ms to 6.14 ms |
+| 2000 x 1000 | 2,000,000 | about 3 s to 6.71 ms | about 18 to 30 ms to 4.81 ms |
+
+Across every zoom at 2000 by 1000 the slowest frame is about 19 ms, where cells are between 3 and 8 pixels and tens of thousands of them are on screen at once. Everything else is between 5 and 12 ms.
+
+Export is unaffected by any of this: it draws the exact outline, and takes as long as it takes.
 
 ## Shortcuts
 
@@ -49,7 +75,7 @@ The current release supports up to 32 layers, a 256 by 256 canvas, and 512 palet
 | Clear selected cells or layer       | Delete                                |
 | Deselect                            | Esc                                   |
 
-Export the artwork using the top-right Export PNG button. File also contains the SVG export. PNG uses a 16-pixel hexagon radius with transparency and no editor grid or canvas background; cells that hold no color stay transparent. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
+Export the artwork using the top-right Export PNG button. File also contains the SVG export. PNG uses a 16-pixel hexagon radius with transparency and no editor grid or canvas background; cells that hold no color stay transparent. A canvas too large for that scales down rather than being refused: at 16 pixels a cell, 2000 by 1000 would be about 59,000 by 25,000 pixels, so the export uses the largest scale that fits inside 64 million pixels. SVG writes one polygon per cell, so a large canvas makes a large file slowly. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
 
 ## Build and verification
 
@@ -66,7 +92,7 @@ pwsh -File ./Scripts/Publish.ps1
 - Build compiles the complete solution in Release mode with warnings treated as errors.
 - Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
 - Validate is the entry point to use while someone is working on this machine, and the one an agent should use. It runs Verify, puts the real window on the validation display, and watches the whole run for anything that would disturb whoever is at the keyboard. See "Validating without disturbing anyone" below.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, lays out the palette grid and chooses and adds a color through its real controls, drives the pointer across the canvas, and checks session logging. It asserts that every check reported, so an application that exits early cannot pass by silence. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, lays out the palette grid and chooses and adds a color through its real controls, draws a canvas at each level of detail and checks that a cell's color lands where that cell is, drives the pointer across the canvas, and checks session logging. It asserts that every check reported, so an application that exits early cannot pass by silence. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
