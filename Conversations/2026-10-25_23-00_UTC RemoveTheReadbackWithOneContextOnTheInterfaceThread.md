@@ -58,3 +58,34 @@ Not yet, and the reason is on your side of the machine: the session is locked. T
 **What I need from you.** Unlock the session and leave it unlocked for a few minutes, then say so. If you can also run the capture from an elevated PowerShell, that gives the strongest answer, since PresentMon then sees the displayed time of every frame; otherwise I will measure WPF's own render cadence from inside the editor, which needs no elevation and tells how many frames the window renders a second, though not when each one lit the display.
 
 Nothing in the repository changed this turn beyond this record. The scripts live in my scratchpad and the trial captures in LogOutput, which is ignored.
+
+## User
+
+i unlocked the pc. i want you to do comprehensive analysis, perf analysis, and validation of the whole hexel editor app. fix/improve/change things as you see fit. for this prompt, you can use any displays and you don't have to worry about disrupting me because i won't be using the pc for a while.
+
+## User (sent while the work was running)
+
+edit: fix/improve/change/refacor things as you see fit.
+
+## Assistant
+
+Done, and validated three ways: the full validation script, a complete measurement run, and the real editor driven with the physical mouse and keyboard on your primary display. Seven commits are on main.
+
+**The question that was open.** Under a real hand, the window is never the limit. With the pointer dragged in a circle at a thousand positions a second on the 120 Hz display, the canvas drew 370 frames a second, median gap 2.9 ms, longest 6 to 12 ms, each frame costing 0.1 to 0.2 ms of GPU work. The compositor shows one frame in three and always has a fresh one. PresentMon cannot record from an unelevated shell, so this comes from a new `--log-frames` switch that makes the editor log its own frame cadence every two seconds while frames are being drawn.
+
+I tried throttling to one frame per composition tick and rejected it. WPF's rendering event fires after every render here rather than once per refresh, and taking one frame per reported frame time gave 200 frames a second with 30 ms holes where there had been none. The plain invalidation stays, and the document records why.
+
+**What the review found and fixed.**
+
+- Undoing one brush stroke rebuilt the whole canvas. Every undo, redo and structural change reported itself as a change to everything, so the window recomposited two million cells and re-uploaded sixteen megabytes to undo a dab, rename a layer, or click a layer in the list. There is now an `Artwork` flag that only the changes altering how cells look set, and each history record reports what applying it touches. Undoing a stroke went from that rebuild to a 0.19 ms frame. Three new unit tests pin which changes report what.
+- Compositing ran five times slower than its own arithmetic under the default tiered JIT: 52 ms over the large canvas against 10 ms with tiering off. A runtime switch was a bad trade, since the editing operations lose their profile-guided speed. The loop is restructured instead, same arithmetic term for term, and runs in 5.2 ms under the default tiering, faster than either setting.
+- The raster was copied before every upload. Hiding or showing a layer went from 14.5 ms to 8.8 ms.
+- The flood fill finds neighbours in columns and rows from the line's parity instead of converting through axial coordinates six times a cell: 54 ms to 40 ms over the whole canvas, with a test that the offsets agree with the axial directions on every parity of both orientations.
+- The status line is set only when the hovered cell changes. A project whose layers would exceed the cell budget is refused on load instead of allocated past it.
+- The measurement row named "undo a whole-canvas change" was undoing a one-cell fill. It now clears and restores every cell, and reads 15.2 ms, of which 8.8 ms is the frame.
+
+**What a person waits for now, on a 2000 x 1000 canvas:** paint one cell 0.20 ms, drag the brush over 60 cells 0.42 ms, pan 0.10 ms, undo one stroke 0.72 ms, rename a layer 0.63 ms, hide or show a layer 8.8 ms, undo a whole-canvas change 15.2 ms. The slowest things left are the whole-canvas editing operations themselves: flood fill 40 ms, move a full selection 37 ms, rotate 31 ms, clear 20 ms, all on the input thread.
+
+**Validated.** `Validate.ps1` passes in full on the final build: guard rules, build, 66 unit tests, the hidden-host checks including the pixel-exact comparison of the window's own frame, the display pass on NE18NZ2, and nothing of the run outside that display. The real-input run on the primary display captured each stage: pencil stroke, eraser at a larger brush, undo, undo and redo, wheel zoom, middle-button pan, grid off, fit, right-button erase, and a clean close through Alt+F4 and the unsaved-changes prompt. Every capture shows the expected state. One limit: the right-button erase ran over cells where the active layer is empty, so its capture shows no visible change; that it edited something shows in the Redo button going disabled, and the message-driven pointer check covers the gesture itself.
+
+**Not done.** The whole-canvas editing operations still run on the input thread with no feedback. Compositing layers on the GPU would make hiding a layer instant on any canvas, and is the next real project if that 8.8 ms ever matters.
