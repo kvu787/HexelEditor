@@ -1328,3 +1328,202 @@ Two things to settle before committing to it. The validation harness renders off
 ### One thing deliberately left out
 
 I led with instancing last time and it obscured the idea. Ignore it for now. Once this is working you can notice that every position in that 96 MB buffer is computed from two loop counters, and delete the buffer by moving those lines into the vertex shader. That is a refactor you make later, not a thing you need to understand now.
+
+## User
+
+ignore my level of understanding.
+
+how would you do this:
+let's say i have a hex grid with a color for each hex cell and 4 triangles for each hex cell. there is also float32 that basically controls the "zoom level" and a vec2_float32 that basically controls "canvas panning". what is the most performant way to render this to a 2560x1440 screen?
+
+## Assistant
+
+Drop the geometry entirely. The most performant renderer for a regular tiling doesn't rasterise cells -- it evaluates the tiling per pixel.
+
+### Why
+
+|                               | Instanced triangles | Full-screen fragment pass |
+| ----------------------------- | ------------------- | ------------------------- |
+| Draw calls                    | 1                   | 1                         |
+| Vertex invocations @ 2M cells | 12,000,000          | **3**                     |
+| Primitives                    | 8,000,000           | **1**                     |
+| Fragments                     | 3.7M                | 3.7M                      |
+| VRAM                          | ~240 MB             | **~16 MB**                |
+| Cost at full zoom-out         | 2-5 ms              | **~0.5 ms**               |
+| Cost at full zoom-in          | <1 ms               | ~0.3 ms                   |
+| Cost dependency               | cell count x zoom   | **nothing**               |
+
+The last row is the real argument. Geometry cost swings with zoom and canvas size; this is a flat per-frame cost that never changes.
+
+### Setup
+
+- **One texture**, RGBA8, `2*W x H`, mipmapped. Two texels per cell horizontally so the half-cell row offset lands on exactly one texel -- the same trick `ArtworkCache` already uses. 2000x1000 -> 16 MB + 5 MB of mips.
+- **Three uniforms**: `invScale`, `pan`, `cellPixels`.
+- **No vertex buffer, no index buffer.** Draw 3 vertices and synthesise a full-screen triangle from `gl_VertexID`. One oversized triangle, not a quad -- a quad's shared diagonal gets rasterised twice in 2x2 quads along its length.
+
+```glsl
+void main() {                                  // vertex
+    vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+```
+
+### The fragment shader
+
+```glsl
+layout(binding = 0) uniform sampler2D uColours;   // 2W x H, mipmapped
+uniform vec2  uInvScale;      // world units per pixel (1/zoom)
+uniform vec2  uPan;
+uniform vec2  uGrid;          // W, H in cells
+uniform float uCellPixels;    // sqrt(3) * radius * zoom
+
+out vec4 fragColor;
+const float SQRT3 = 1.7320508;
+
+ivec2 cellAt(vec2 w) {                         // pointy-top, radius 1
+    vec2 ax = vec2(SQRT3/3.0 * w.x - w.y/3.0, 2.0/3.0 * w.y);
+    float x = ax.x, z = ax.y, y = -x - z;
+    float rx = round(x), ry = round(y), rz = round(z);
+    vec3  d  = abs(vec3(rx-x, ry-y, rz-z));
+    if      (d.x > d.y && d.x > d.z) rx = -ry - rz;
+    else if (d.y > d.z)              ry = -rx - rz;
+    else                             rz = -rx - ry;
+    return ivec2(int(rx) + ((int(rz) - (int(rz) & 1)) >> 1), int(rz));  // odd-r offset
+}
+
+vec4 fetch(vec2 w) {
+    ivec2 c = cellAt(w);
+    if (any(lessThan(c, ivec2(0))) || any(greaterThanEqual(c, ivec2(uGrid)))) return vec4(0);
+    return texelFetch(uColours, ivec2(c.x * 2 + (c.y & 1), c.y), 0);
+}
+
+void main() {
+    vec2 w = (gl_FragCoord.xy - uPan) * uInvScale;
+
+    if (uCellPixels < 3.0) {
+        // Cells are sub-pixel. Skip the hex maths and let the texture unit average.
+        fragColor = texture(uColours, w / vec2(SQRT3 * uGrid.x, 1.5 * uGrid.y));
+        return;
+    }
+
+    // Cells are larger than a pixel. Rotated-grid 2x2 supersample of the exact tiling.
+    vec2 d = uInvScale * 0.25;
+    fragColor = 0.25 * ( fetch(w + vec2( d.x,  3.0*d.y))
+                       + fetch(w + vec2(-3.0*d.x,  d.y))
+                       + fetch(w + vec2( 3.0*d.x, -d.y))
+                       + fetch(w + vec2(-d.x, -3.0*d.y)) );
+}
+```
+
+### The three things that make it fast
+
+**The branch is uniform.** `uCellPixels` is the same for every pixel in the frame, so the whole draw takes one side. Zero warp divergence.
+
+**Zoomed out, the hex maths disappears.** Below ~3 px/cell the tiling is sub-pixel, so there is nothing to resolve. One filtered texture fetch. This is the case that kills the geometry approach and it's the cheapest case here.
+
+**Zoomed in, 4 fetches hit the same cache lines.** Neighbouring pixels sample neighbouring texels.
+
+### Antialiasing
+
+**MSAA does nothing here** -- there's one triangle, and MSAA only antialiases geometric edges. Every hex edge is procedural. You must resolve it in the shader.
+
+Rotated-grid 2x2 supersampling is the right call: exact, branchless, 4x the ALU on a shader that's ALU-trivial anyway. An analytic hexagon SDF is fewer instructions but needs the neighbouring cell's colour to blend against, which costs the fetch you just saved.
+
+Blend the two branches over `cellPixels` in [2.5, 3.5] rather than switching hard, or you'll see a pop.
+
+### Painting, and the one trap
+
+Updating a cell is a 2-texel write. The trap is **mip regeneration**: a full chain rebuild on a 16 MB texture is ~0.5 ms, and doing that per brush dab would cost more than everything else combined.
+
+Mips are only read in the zoomed-out branch, so mark them stale on edit and rebuild lazily -- on stroke end, or the first frame `cellPixels` drops below the threshold. While zoomed in they're never sampled, so staleness is invisible.
+
+### Two things to not do
+
+**Don't store palette indices in the sampled texture.** Averaging indices is meaningless, so the minified branch breaks. Keep RGBA8.
+
+**Don't reach for a compute shader.** A full-screen fragment pass already gets the texture cache and optimal tile scheduling.
+
+### And the free one
+
+None of this runs if nothing changed. An idle editor should render zero frames.
+
+### Expected
+
+~0.3-0.6 ms per frame at 2560x1440, flat across every zoom level and canvas size, against the 9-133 ms the current CPU renderer measures on a 2000x1000 canvas.
+
+## User
+
+![The comparison table, with the vertex invocations row circled](Images/2026-10-24_21-03_UTC%20ZoomRenderingTiersAndBlenderHexGridScript%209.png)
+
+explain this
+
+## Assistant
+
+### What the number counts
+
+The vertex shader runs **once per vertex, every frame**. That row is how many times it runs to draw one frame.
+
+### Why 12,000,000
+
+In the geometry approach you are drawing actual hexagons. Each hexagon is 6 corners:
+
+```
+2,000,000 cells x 6 corners = 12,000,000 vertices
+```
+
+Every frame, the GPU runs the vertex shader 12 million times -- once for each corner of each hexagon -- to work out where that corner lands on screen. Pan by one pixel and it does all 12 million again.
+
+(The index buffer is already accounted for. Each cell's 12 fan indices reference only 6 distinct corners, and the post-transform cache means 6 shader runs rather than 12.)
+
+### Why 3
+
+Because in the second approach **there are no hexagons**. Not as geometry. The GPU never hears about them.
+
+You draw exactly one triangle, sized so it covers the entire screen:
+
+```
+ y=3  +
+      |\
+      | \
+      |  \
+ y=1  +---+\         <- the hypotenuse passes exactly through (1,1)
+      |SCR|  \
+      |EEN|    \
+ y=-1 +---+------+
+     x=-1 x=1   x=3
+```
+
+Clip space runs from -1 to 1 in both axes, so the screen is that inner box. A triangle at `(-1,-1)`, `(3,-1)`, `(-1,3)` contains it completely, and the GPU clips the overhang for free.
+
+A triangle has 3 corners. The vertex shader runs 3 times. That's the whole frame -- for a 50x25 grid or a 20000x10000 one, it's 3.
+
+### Where the hexagons went
+
+Into arithmetic. The `cellAt()` function in the fragment shader takes a pixel's world position and computes which hexagon it falls inside, directly:
+
+```glsl
+vec2 ax = vec2(SQRT3/3.0 * w.x - w.y/3.0, 2.0/3.0 * w.y);   // world -> axial
+... cube-round to the nearest cell ...
+```
+
+A hex grid is perfectly regular, so "which cell is this point in" is a closed-form calculation, not a search. There's no reason to store two million hexagons when you can compute the answer in about twenty instructions.
+
+### Why this is the row that matters
+
+Look at the **Fragments** row: 3.7M on both sides. Identical. Both approaches shade exactly the same pixels, because the screen is the same size either way.
+
+So every bit of the saving comes from deleting the geometry front-end -- the 12M vertex invocations and the 8M primitive setups. That front-end produces nothing the fragment pass can't compute; it's pure overhead in service of describing a shape the GPU could have derived.
+
+### The trade you're making
+
+It isn't free. You swap:
+
+| | Geometry | Fragment pass |
+| ----------------- | ----------------------------- | -------------------------------- |
+| Front-end cost    | 12M vertices, 8M primitives   | 3 vertices, 1 primitive          |
+| Per-pixel cost    | ~0 (just interpolate a colour) | ~30 ALU + a texture fetch        |
+| Scales with       | **cell count**                | **screen resolution**            |
+
+You are trading work proportional to **cell count** for work proportional to **screen size**.
+
+That's the whole argument, because your screen is 2560x1440 and always will be, while your canvas can be 2 million cells or 200 million. One of those numbers is bounded and the other isn't.
