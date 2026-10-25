@@ -21,6 +21,8 @@ namespace HexelEditor.Desktop;
 public sealed class ArtworkCache : IDisposable
 {
     private const int PixelsPerCell = 2;
+    // Below this many rows, compositing them one after another is quicker than sharing them out.
+    private const int RowsWorthSharing = 64;
 
     private SKBitmap? raster;
     private int[]? pixels;
@@ -111,7 +113,8 @@ public sealed class ArtworkCache : IDisposable
         var stride = raster.Width;
         var background = document.BackgroundColor;
         var pointyTop = document.Orientation == HexOrientation.PointyTop;
-        for (var row = minRow; row <= maxRow; row++)
+        var target = pixels;
+        void CompositeRow(int row)
         {
             var cellRow = row * document.Width;
             for (var column = minColumn; column <= maxColumn; column++)
@@ -121,17 +124,25 @@ public sealed class ArtworkCache : IDisposable
                 if (pointyTop)
                 {
                     var start = column * PixelsPerCell + (row & 1) + row * stride;
-                    pixels[start] = unchecked((int)color);
-                    pixels[start + 1] = unchecked((int)color);
+                    target[start] = unchecked((int)color);
+                    target[start + 1] = unchecked((int)color);
                 }
                 else
                 {
                     var start = column + (row * PixelsPerCell + (column & 1)) * stride;
-                    pixels[start] = unchecked((int)color);
-                    pixels[start + stride] = unchecked((int)color);
+                    target[start] = unchecked((int)color);
+                    target[start + stride] = unchecked((int)color);
                 }
             }
         }
+        // A cell writes texels no other cell writes -- along the offset axis its two are picked out by its
+        // own parity -- so the rows do not overlap and can be composited at the same time. Worth doing only
+        // for the whole-canvas rebuilds a structural change forces: a brush dab is a handful of rows, and
+        // handing those out costs more than doing them.
+        if (maxRow - minRow + 1 >= RowsWorthSharing)
+            System.Threading.Tasks.Parallel.For(minRow, maxRow + 1, CompositeRow);
+        else
+            for (var row = minRow; row <= maxRow; row++) CompositeRow(row);
         raster.NotifyPixelsChanged();
         // The cells written, as the texels they were written to. A cell's two texels run along the offset
         // axis and start one further on for an odd line, so the span covers one extra texel at each end
