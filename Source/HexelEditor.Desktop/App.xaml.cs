@@ -17,24 +17,29 @@ public partial class App : Application
 
     private readonly bool verifying;
 
+    // Set for a measurement run, which is verification's quieter relative: the same hidden host on a desktop
+    // of its own, driven by Measure.ps1, but timing the editor rather than checking it.
+    private readonly bool measuring;
+
     public App()
     {
         var arguments = Environment.GetCommandLineArgs();
         verifying = arguments.Length == 3 && arguments[1] == "--verify-output";
-        if (verifying || Array.IndexOf(arguments, ShowWithoutFocusOption) >= 0)
+        measuring = arguments.Length == 3 && arguments[1] == MeasureOutputOption;
+        if (verifying || measuring || Array.IndexOf(arguments, ShowWithoutFocusOption) >= 0)
         {
             // A crash would otherwise put a Windows Error Reporting window on whichever display Windows
             // likes, which for a run meant to be invisible is the worst kind of interruption. Failing
             // silently is right here: the session log and the exit code carry the diagnosis.
             SetErrorMode(FailCriticalErrors | NoGeneralProtectionFaultErrorBox | NoOpenFileErrorBox);
         }
-        Log = new SessionLog(verifying ? Path.GetFullPath(arguments[2]) : null);
+        Log = new SessionLog(verifying || measuring ? Path.GetFullPath(arguments[2]) : null);
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         DispatcherUnhandledException += (_, args) =>
         {
             Log.Write($"Unhandled dispatcher exception: {args.Exception}");
             args.Handled = true;
-            if (verifying)
+            if (verifying || measuring)
             {
                 // Ends the process rather than asking WPF to shut down. A check that fails after driving the
                 // pointer has left the input system mid-gesture, and a shutdown from there has been seen to
@@ -81,7 +86,7 @@ public partial class App : Application
             // A run that was never meant to be seen has nobody to answer a dialog: verification has no
             // foreground at all, and a window placed on a display nobody watches would leave a box sitting
             // there unread. For those the session log and the exit code carry the refusal.
-            if (!verifying && placement == null)
+            if (!verifying && !measuring && placement == null)
                 MessageBox.Show(
                     $"{reason}\n\nHexel Editor draws its canvas with a GPU shader and has no software fallback, so it cannot open.",
                     "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -135,6 +140,44 @@ public partial class App : Application
             Shutdown();
             return;
         }
+        if (measuring)
+        {
+            // The same hidden host verification uses, for the same reasons, at a size closer to a real
+            // editor window: the figures are about what a frame of this size costs, so the canvas wants to
+            // be about as large as one on a display. Nothing is shown and nothing is focused.
+            const int hostWidth = 2560, hostHeight = 1440;
+            var folder = Log.FolderPath;
+            Log.Write("Measurement mode started.");
+            KeepFocusAway = true;
+            window.Width = hostWidth; window.Height = hostHeight;
+            // The canvas needs a presentation source to have a size at all, so the window's content goes
+            // into a host of its own exactly as it does for verification. Nothing is rendered through the
+            // host: the measurement paints the canvas itself.
+            var measurementRoot = (FrameworkElement)window.Content;
+            window.Content = null;
+            using var measurementHost = new HwndSource(new HwndSourceParameters("HexelMeasurement")
+            {
+                Width = hostWidth,
+                Height = hostHeight,
+                PositionX = -30000,
+                PositionY = -30000,
+                WindowStyle = unchecked((int)(VisibleStyle | PopupStyle)),
+                ExtendedWindowStyle = ToolWindowStyle
+            });
+            measurementHost.RootVisual = measurementRoot;
+            measurementRoot.Measure(new Size(hostWidth, hostHeight));
+            measurementRoot.Arrange(new Rect(0, 0, hostWidth, hostHeight));
+            measurementRoot.UpdateLayout();
+            window.MeasureEditor(folder);
+            // Ends the process rather than asking WPF to wind down, for the reason already recorded above
+            // for a failed verification run: a shutdown from here has been seen to hang, and a measurement
+            // run that never exits is a tool nobody can use. The report and the log are both on disk by the
+            // time this runs, and the log is written with AutoFlush.
+            Log.Write("Measurement mode finished. Exit code: 0.");
+            Log.Dispose();
+            Environment.Exit(0);
+            return;
+        }
         if (placement is { } bounds)
         {
             // Placing the window from SourceInitialized puts it on the wanted display before its first frame,
@@ -177,6 +220,7 @@ public partial class App : Application
     }
 
     private const string ShowWithoutFocusOption = "--show-without-focus";
+    private const string MeasureOutputOption = "--measure-output";
     private const uint NoZOrder = 0x0004, NoActivate = 0x0010, NoOwnerZOrder = 0x0200;
     private const int ExtendedStyle = -20;
     private static readonly IntPtr NoActivateStyle = 0x08000000;

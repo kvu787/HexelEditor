@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using HexelEditor.Core;
@@ -34,6 +35,37 @@ public sealed class HexCanvas : SKElement
     public bool FilledShapes { get; set; }
     public bool SpacePressed { get; set; }
     public HexCoordinate? HoverCoordinate => hover;
+    /// <summary>
+    /// What one paint spent, in milliseconds: the dotted backdrop, the artwork (the renderer's whole frame,
+    /// including the wait on its thread), copying that frame onto this surface, and the selection, previews
+    /// and cursor ring drawn over it. Only filled while <see cref="MeasurePaints"/> is set.
+    /// </summary>
+    public readonly record struct PaintTimings(double Backdrop, double Artwork, double Blit, double Overlays)
+    {
+        public double Total => Backdrop + Artwork + Blit + Overlays;
+    }
+
+    /// <summary>
+    /// Times each paint's parts. Off unless something is measuring, because attributing the GPU's own share
+    /// costs a sync inside the frame.
+    /// </summary>
+    public static bool MeasurePaints;
+
+    /// <summary>The parts of the last paint drawn while <see cref="MeasurePaints"/> was set.</summary>
+    public PaintTimings LastPaintTimings { get; private set; }
+
+    /// <summary>
+    /// What the overlays were culled against on the last measured paint, and how many cells they therefore
+    /// walked. Both are here because the figure for the overlays is only meaningful next to the amount of
+    /// canvas they covered, and that is decided by the surface's clip rather than by anything visible.
+    /// </summary>
+    public SKRect LastVisibleBounds { get; private set; }
+
+    /// <summary>How many cells the last measured paint's overlay pass walked.</summary>
+    public long LastOverlayCells { get; private set; }
+
+    private static double Milliseconds(long from, long to) => (to - from) * 1000.0 / Stopwatch.Frequency;
+
     public event Action<string>? StatusChanged;
     public event Action<uint>? ColorPicked;
     public event Action? ZoomChanged;
@@ -94,9 +126,30 @@ public sealed class HexCanvas : SKElement
         return new Point(x * Zoom + offsetX, y * Zoom + offsetY);
     }
 
+    /// <summary>
+    /// Paints one frame into a surface the caller owns, through the same code a real paint runs.
+    /// </summary>
+    /// <remarks>
+    /// For measurement, and it exists because asking WPF for a frame is not a way to get one: a control
+    /// repaints when WPF decides to run its render pass, and until then a visual is drawn from what it drew
+    /// last time. Rendering the tree into a bitmap reuses that same content, so it produces a picture
+    /// without producing a paint. The surface stands in for the one SKElement hands over, which is a raster
+    /// surface of this kind over a bitmap's pixels.
+    /// </remarks>
+    public void PaintOneFrame(SKSurface surface, SKImageInfo info)
+    {
+        // SKElement builds a surface for each paint, so Paint is written for a canvas that arrives with no
+        // transform of its own and leaves its last one in place. A caller reusing one surface has to put it
+        // back into that state, or every paint inherits the scale of the one before it.
+        surface.Canvas.ResetMatrix();
+        Paint(this, new SKPaintSurfaceEventArgs(surface, info));
+    }
+
     private void Paint(object? sender, SKPaintSurfaceEventArgs args)
     {
         var canvas = args.Surface.Canvas;
+        var measuring = MeasurePaints;
+        var paintStarted = measuring ? Stopwatch.GetTimestamp() : 0;
         canvas.Clear(new SKColor(243, 243, 243));
         if (session == null || ActualWidth <= 0) return;
         // Device pixels per unit of the canvas's own coordinates. The renderer is given the horizontal one
@@ -111,6 +164,7 @@ public sealed class HexCanvas : SKElement
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
         canvas.Restore();
+        var afterBackdrop = measuring ? Stopwatch.GetTimestamp() : 0;
 
         // Drained every frame whatever the zoom, so the raster never misses an edit made while it was not
         // the thing being drawn.
@@ -127,8 +181,10 @@ public sealed class HexCanvas : SKElement
         // it stays crisp on a scaled display, and blitted back at 1:1.
         var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
             Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid);
+        var afterArtwork = measuring ? Stopwatch.GetTimestamp() : 0;
         // 1:1, so nearest sampling is both exact and the cheapest path.
         canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
+        var afterBlit = measuring ? Stopwatch.GetTimestamp() : 0;
 
         canvas.Scale(scaleX, scaleY);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
@@ -150,6 +206,11 @@ public sealed class HexCanvas : SKElement
             canvas.DrawPath(path, outline); canvas.Restore();
         }
         var (minColumn, minRow, maxColumn, maxRow) = CanvasGeometry.VisibleCells(session.Document, visible);
+        if (measuring)
+        {
+            LastVisibleBounds = visible;
+            LastOverlayCells = session.Selection.Count > 0 ? (long)(maxRow - minRow + 1) * (maxColumn - minColumn + 1) : 0;
+        }
         if (session.Selection.Count > 0)
             for (var row = minRow; row <= maxRow; row++)
                 for (var column = minColumn; column <= maxColumn; column++)
@@ -174,6 +235,12 @@ public sealed class HexCanvas : SKElement
             outline.Color = session.CanPaint ? new SKColor(31, 31, 31) : new SKColor(196, 43, 28);
             foreach (var cell in hover.Value.Disk(Tool is DrawingTool.Pencil or DrawingTool.Eraser ? BrushRadius : 0)) Highlight(cell, false, true);
         }
+        if (measuring)
+            LastPaintTimings = new PaintTimings(
+                Milliseconds(paintStarted, afterBackdrop),
+                Milliseconds(afterBackdrop, afterArtwork),
+                Milliseconds(afterArtwork, afterBlit),
+                Milliseconds(afterBlit, Stopwatch.GetTimestamp()));
     }
 
     private void PointerDown(object sender, MouseButtonEventArgs args)

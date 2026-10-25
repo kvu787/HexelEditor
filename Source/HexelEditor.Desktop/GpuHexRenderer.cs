@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using HexelEditor.Core;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using SkiaSharp;
@@ -40,6 +42,10 @@ public sealed class GpuHexRenderer : IDisposable
     private const float GridLinePixels = 0.9f;
 
     private readonly Thread thread;
+    // Which device the context landed on is worth having in the log. A machine with both an integrated and
+    // a discrete GPU gives the driver the choice, and the two differ by more than speed: reading a frame
+    // back from a discrete GPU crosses the bus, and from an integrated one it does not.
+    private Action<string>? log;
     private readonly SemaphoreSlim wanted = new(0);
     private readonly SemaphoreSlim finished = new(0);
     private readonly SemaphoreSlim ready = new(0);
@@ -57,6 +63,28 @@ public sealed class GpuHexRenderer : IDisposable
     private SKImage? colours;
     private ArtworkCache? colourSource;
     private int colourVersion = -1;
+
+    /// <summary>
+    /// What one frame spent, in milliseconds, split into the parts that behave differently: recompositing the
+    /// cells that changed, uploading the colour texture, recording the draw, the GPU running it, and reading
+    /// the result back. Only filled while <see cref="MeasureFrames"/> is set.
+    /// </summary>
+    public readonly record struct FrameTimings(double Composite, double Upload, double Submit, double Gpu, double Readback)
+    {
+        public double Total => Composite + Upload + Submit + Gpu + Readback;
+    }
+
+    /// <summary>
+    /// Times each frame's parts, which costs a full GPU sync inside the frame to attribute the GPU's own
+    /// share, so it is off unless something is measuring. Set it before the frame, read
+    /// <see cref="LastFrameTimings"/> after.
+    /// </summary>
+    public static bool MeasureFrames;
+
+    /// <summary>The parts of the last frame drawn while <see cref="MeasureFrames"/> was set.</summary>
+    public FrameTimings LastFrameTimings { get; private set; }
+
+    private static double Milliseconds(long from, long to) => (to - from) * 1000.0 / Stopwatch.Frequency;
 
     // The one request in flight. The caller blocks until it is answered, so a single slot is all
     // that is ever needed, and the two semaphores are all the synchronisation there has to be.
@@ -106,7 +134,7 @@ public sealed class GpuHexRenderer : IDisposable
 
     private static GpuHexRenderer? TryCreate(Action<string>? log)
     {
-        var renderer = new GpuHexRenderer();
+        var renderer = new GpuHexRenderer { log = log };
         renderer.thread.Start();
         // Creating the context is the slow part. A machine without a GPU usually fails quickly; one that
         // hangs here is given up on rather than left to hold the editor behind it.
@@ -141,6 +169,7 @@ public sealed class GpuHexRenderer : IDisposable
             context = GRContext.CreateGl(glInterface) ?? throw new InvalidOperationException("No GL context.");
             effect = SKRuntimeEffect.CreateShader(Sksl, out var errors)
                 ?? throw new InvalidOperationException("Shader failed to compile: " + errors);
+            log?.Invoke($"GPU renderer device: {GL.GetString(StringName.Renderer)} / {GL.GetString(StringName.Vendor)} / OpenGL {GL.GetString(StringName.Version)}.");
         }
         catch (Exception error)
         {
@@ -214,10 +243,18 @@ public sealed class GpuHexRenderer : IDisposable
             surfaceHeight = height;
         }
 
+        // Measured as five parts rather than one, because they answer to different things: compositing
+        // follows the cells that changed, uploading follows the canvas, recording the draw follows little,
+        // and the GPU's share and the read back both follow the window. One number for the frame hides
+        // which of them is the one worth going after.
+        var measuring = MeasureFrames;
+        var frameStarted = measuring ? Stopwatch.GetTimestamp() : 0;
+
         // The colour texture is ArtworkCache's raster: two texels a cell across, so the
         // half-cell offset of alternate rows lands on exactly one texel. It is only re-uploaded
         // when a cell actually changed, so panning and zooming upload nothing.
         var raster = cache.Refresh(document);
+        var afterComposite = measuring ? Stopwatch.GetTimestamp() : 0;
         // A version counts the changes within one cache, so it says nothing across two of them: a second
         // cache reaching a version this one has already seen would leave the first cache's texture in
         // place. Which cache the texture came from is therefore part of whether it is still current.
@@ -228,6 +265,7 @@ public sealed class GpuHexRenderer : IDisposable
             colourSource = cache;
             colourVersion = cache.Version;
         }
+        var afterUpload = measuring ? Stopwatch.GetTimestamp() : 0;
 
         var cellPixels = (float)(Math.Sqrt(3) * CanvasGeometry.CellRadius * zoom);
         var pointyTop = document.Orientation == HexOrientation.PointyTop;
@@ -252,9 +290,22 @@ public sealed class GpuHexRenderer : IDisposable
 
         surface.Canvas.Clear(SKColors.Transparent);
         surface.Canvas.DrawRect(new SKRect(0, 0, width, height), paint);
+        var afterSubmit = measuring ? Stopwatch.GetTimestamp() : 0;
         context!.Flush();
+        // Flushing hands the work over without waiting for it, so the time spent recording the draw says
+        // nothing about what the GPU then does with it. Waiting here is the only way to tell the two apart,
+        // and it is why measuring is not something to leave switched on.
+        if (measuring) GL.Finish();
+        var afterGpu = measuring ? Stopwatch.GetTimestamp() : 0;
         if (!surface!.ReadPixels(readback!.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
             throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
+        if (measuring)
+            LastFrameTimings = new FrameTimings(
+                Milliseconds(frameStarted, afterComposite),
+                Milliseconds(afterComposite, afterUpload),
+                Milliseconds(afterUpload, afterSubmit),
+                Milliseconds(afterSubmit, afterGpu),
+                Milliseconds(afterGpu, Stopwatch.GetTimestamp()));
         return readback;
     }
 
