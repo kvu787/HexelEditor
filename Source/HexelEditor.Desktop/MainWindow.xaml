@@ -24,8 +24,7 @@
               Stretch="Uniform" Fill="{StaticResource Muted}"
               Data="M 14,0 L 27,7 L 27,22 L 14,29 L 1,22 L 1,7 Z M 14,7 L 20,11 L 20,18 L 14,22 L 8,18 L 8,11 Z" />
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Content="Save" Click="SaveClicked" Margin="0,0,8,0" />
-          <Button Content="Export PNG" Click="ExportPngClicked" Style="{StaticResource AccentButton}" />
+          <Button Content="Save" Click="SaveClicked" Style="{StaticResource AccentButton}" />
         </StackPanel>
         <Menu VerticalAlignment="Center">
           <MenuItem x:Name="FileMenu" Header="_File">
@@ -35,9 +34,6 @@
             <Separator />
             <MenuItem Header="Save" InputGestureText="Ctrl+S" Click="SaveClicked" />
             <MenuItem Header="Save as..." InputGestureText="Ctrl+Shift+S" Click="SaveAsClicked" />
-            <Separator />
-            <MenuItem Header="Export PNG..." Click="ExportPngClicked" />
-            <MenuItem Header="Export SVG..." Click="ExportSvgClicked" />
             <Separator />
             <MenuItem Header="Exit" InputGestureText="Alt+F4" Click="ExitClicked" />
           </MenuItem>

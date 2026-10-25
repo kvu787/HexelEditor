@@ -71,10 +71,8 @@ Get-Content -LiteralPath $report
 $expected = @(
     'WPF commands and saved-state indicator: passed',
     'Project save/load: passed',
-    'PNG export:',
-    'SVG polygons: passed',
-    'Flat-top transparent export: passed',
-    'Canvas background:',
+    'Artwork rendering:',
+    'Canvas surface:',
     'Menu bar and dialogs: passed',
     'Palette grid:',
     'Render tiers:',

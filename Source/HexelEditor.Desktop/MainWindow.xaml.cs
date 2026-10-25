@@ -318,21 +318,6 @@ public partial class MainWindow : Window
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException) { ShowError($"Could not save the project.\n\n{exception.Message}", exception); return false; }
     }
 
-    private void Export(string format)
-    {
-        EditorCanvas.FinishGesture();
-        var dialog = new SaveFileDialog { Filter = format == "svg" ? "SVG artwork (*.svg)|*.svg" : "PNG image (*.png)|*.png", DefaultExt = "." + format, FileName = session.Document.Name };
-        if (dialog.ShowDialog(this) != true) return;
-        try
-        {
-            if (format == "svg") ArtworkRenderer.ExportSvg(session.Document, dialog.FileName);
-            else ArtworkRenderer.ExportPng(session.Document, dialog.FileName);
-            StatusLabel.Text = $"Exported {System.IO.Path.GetFileName(dialog.FileName)}";
-            App.Log.Write($"Exported artwork: {dialog.FileName}");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { ShowError($"Could not export.\n\n{exception.Message}", exception); }
-    }
-
     private void Copy() { EditorCanvas.FinishGesture(); clipboard = session.CopySelection(); StatusLabel.Text = "Copied cells. Hover the destination and press Ctrl+V to paste."; UpdateHeader(); }
     private void Cut() { Copy(); Act(session.ClearPixels); }
 
@@ -392,8 +377,6 @@ public partial class MainWindow : Window
     private void OpenExampleClicked(object sender, RoutedEventArgs args) => OpenExample();
     private void SaveClicked(object sender, RoutedEventArgs args) => SaveProject(false);
     private void SaveAsClicked(object sender, RoutedEventArgs args) => SaveProject(true);
-    private void ExportPngClicked(object sender, RoutedEventArgs args) => Export("png");
-    private void ExportSvgClicked(object sender, RoutedEventArgs args) => Export("svg");
     private void ExitClicked(object sender, RoutedEventArgs args) => Close();
     private void UndoClicked(object sender, RoutedEventArgs args) => Act(session.Undo);
     private void RedoClicked(object sender, RoutedEventArgs args) => Act(session.Redo);
@@ -482,60 +465,88 @@ public partial class MainWindow : Window
         var path = System.IO.Path.Combine(folder, "Example.hexel"); ProjectFile.Save(session.Document, path);
         var roundTrip = ProjectFile.Load(path);
         if (roundTrip.Layers.Count != 3 || roundTrip.CompositeAt(0) != session.Document.CompositeAt(0)) throw new InvalidDataException("Project round trip failed.");
-        ArtworkRenderer.ExportPng(roundTrip, System.IO.Path.Combine(folder, "Artwork.png"));
-        ArtworkRenderer.ExportSvg(roundTrip, System.IO.Path.Combine(folder, "Artwork.svg"));
-        using var image = SkiaSharp.SKBitmap.Decode(System.IO.Path.Combine(folder, "Artwork.png"));
-        if (image == null || image.Width < 100 || image.Height < 100) throw new InvalidDataException("PNG export verification failed.");
-        var bounds = ArtworkRenderer.Bounds(roundTrip);
-        SkiaSharp.SKColor Sample(double x, double y) =>
-            image.GetPixel((int)Math.Round(x + 1 - bounds.Left * 16 / ArtworkRenderer.CellRadius), (int)Math.Round(y + 1 - bounds.Top * 16 / ArtworkRenderer.CellRadius));
-        for (var index = 0; index < roundTrip.CellCount; index++)
-        {
-            var coordinate = roundTrip.CoordinateAt(index);
-            var (x, y) = HexGeometry.Center(coordinate, roundTrip.Orientation, 16);
-            if ((uint)Sample(x, y) != roundTrip.CompositeAt(index)) throw new InvalidDataException($"PNG color mismatch at cell {index}.");
-            // Opaque neighbors must also meet with no background between them, which is what a seam would be.
-            foreach (var direction in HexCoordinate.Directions)
-            {
-                var neighbor = roundTrip.IndexOf(coordinate + direction);
-                if (neighbor < 0 || (roundTrip.CompositeAt(neighbor) >> 24) != 255) continue;
-                var (neighborX, neighborY) = HexGeometry.Center(coordinate + direction, roundTrip.Orientation, 16);
-                if (Sample((x + neighborX) / 2, (y + neighborY) / 2).Alpha != 255) throw new InvalidDataException($"PNG seam between cells {index} and {neighbor}.");
-            }
-        }
-        var svg = System.Xml.Linq.XDocument.Load(System.IO.Path.Combine(folder, "Artwork.svg"));
-        if (svg.Root?.Elements().Count() != roundTrip.CellCount) throw new InvalidDataException("SVG geometry is incomplete.");
-        var blankPath = System.IO.Path.Combine(folder, "Transparent.png");
-        ArtworkRenderer.ExportPng(new HexDocument(1, 1, HexOrientation.FlatTop), blankPath);
-        using var blank = SkiaSharp.SKBitmap.Decode(blankPath);
-        if (blank.Pixels.Any(pixel => pixel.Alpha != 0)) throw new InvalidDataException("Empty exported cells are not transparent.");
-        var backgroundCells = VerifyBackgroundLayer();
+        var cells = VerifyArtworkRendering(roundTrip);
+        var surfaceCells = VerifyCanvasSurface();
         EditorCanvas.Fit(); UpdateLayout();
-        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nPNG export: {image.Width} x {image.Height}, all {roundTrip.CellCount} cell colors verified\nSVG polygons: passed\nFlat-top transparent export: passed\nCanvas background: one solid color under all {backgroundCells} cells\n");
+        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nArtwork rendering: all {cells} cell colors verified\nCanvas surface: background and seams verified across {surfaceCells} cells in both orientations\n");
     }
 
-    // The background layer is one color rather than a pattern, so every cell holding no artwork samples the same value.
-    private static int VerifyBackgroundLayer()
+    // Draws a document the way the canvas draws it, one pixel per unit of artwork space, so a check can
+    // sample what a cell actually put on screen. At this size a cell is twenty pixels across, which is the
+    // exact-outline tier, and no raster cache is passed, so this is the path that decides what the editor
+    // shows at the zooms artwork is drawn at. The pixel of margin keeps the outermost cells off the edge.
+    private static SkiaSharp.SKBitmap RenderArtwork(HexDocument document, out SkiaSharp.SKRect bounds)
     {
-        const uint background = 0xFF336699;
-        var document = new HexDocument(5, 4) { BackgroundColor = background };
-        document.Layers[0].Cells[0] = 0xFFFF0000;
-        var bounds = ArtworkRenderer.Bounds(document);
+        bounds = ArtworkRenderer.Bounds(document);
         using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo((int)Math.Ceiling(bounds.Width) + 2, (int)Math.Ceiling(bounds.Height) + 2))
-            ?? throw new InvalidOperationException("Could not create the background verification image.");
+            ?? throw new InvalidOperationException("Could not create the artwork verification image.");
         surface.Canvas.Clear(SkiaSharp.SKColors.Transparent);
         surface.Canvas.Translate(1 - bounds.Left, 1 - bounds.Top);
         ArtworkRenderer.Draw(surface.Canvas, document, background: true);
         using var image = surface.Snapshot();
-        using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
+        return SkiaSharp.SKBitmap.FromImage(image);
+    }
+
+    // Every cell's composited color has to land at that cell's own center. This runs on the reloaded example,
+    // which is three layers of real artwork, so a layer drawn out of order or geometry half a cell out of
+    // place shows up as the wrong color at a known place rather than as a picture that merely looks hexagonal.
+    private static int VerifyArtworkRendering(HexDocument document)
+    {
+        using var bitmap = RenderArtwork(document, out var bounds);
         for (var index = 0; index < document.CellCount; index++)
         {
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, ArtworkRenderer.CellRadius);
             var sample = (uint)bitmap.GetPixel((int)Math.Round(x + 1 - bounds.Left), (int)Math.Round(y + 1 - bounds.Top));
-            var expected = index == 0 ? 0xFFFF0000 : background;
-            if (sample != expected) throw new InvalidDataException($"The canvas background is not solid at cell {index}: {ColorMath.Format(sample)}.");
+            var expected = ColorMath.Over(document.CompositeAt(index), document.BackgroundColor);
+            if (sample != expected)
+                throw new InvalidDataException($"Cell {index} drew {ColorMath.Format(sample)} where {ColorMath.Format(expected)} belongs.");
         }
         return document.CellCount;
+    }
+
+    // Two things about the surface under the artwork, on one canvas holding a single color everywhere but its
+    // first cell. The background is one solid color rather than a pattern, so the cell holding no artwork
+    // samples the background and every other cell samples its own color. And between two opaque neighbors
+    // none of the background may show at all: a hairline there is what makes a canvas read as a grid when no
+    // grid is drawn, and the overlap the cells are drawn with is what keeps it out.
+    //
+    // Both orientations, because the two lay their rows out along different axes and only one of them is what
+    // a new canvas starts as.
+    private static int VerifyCanvasSurface()
+    {
+        const uint background = 0xFF336699;
+        const uint artwork = 0xFFFF0000;
+        var verified = 0;
+        foreach (var orientation in new[] { HexOrientation.PointyTop, HexOrientation.FlatTop })
+        {
+            var document = new HexDocument(5, 4, orientation) { BackgroundColor = background };
+            for (var index = 1; index < document.CellCount; index++) document.Layers[0].Cells[index] = artwork;
+            using var bitmap = RenderArtwork(document, out var bounds);
+            uint Sample(double x, double y) =>
+                (uint)bitmap.GetPixel((int)Math.Round(x + 1 - bounds.Left), (int)Math.Round(y + 1 - bounds.Top));
+            for (var index = 0; index < document.CellCount; index++)
+            {
+                var coordinate = document.CoordinateAt(index);
+                var (x, y) = HexGeometry.Center(coordinate, orientation, ArtworkRenderer.CellRadius);
+                var expected = index == 0 ? background : artwork;
+                var sample = Sample(x, y);
+                if (sample != expected)
+                    throw new InvalidDataException($"The {orientation} canvas drew {ColorMath.Format(sample)} at cell {index} where {ColorMath.Format(expected)} belongs.");
+                if (index == 0) continue;
+                foreach (var direction in HexCoordinate.Directions)
+                {
+                    // Cell zero holds no artwork, so it is not one of the opaque pairs this looks between.
+                    var neighbor = document.IndexOf(coordinate + direction);
+                    if (neighbor <= 0) continue;
+                    var (neighborX, neighborY) = HexGeometry.Center(coordinate + direction, orientation, ArtworkRenderer.CellRadius);
+                    var between = Sample((x + neighborX) / 2, (y + neighborY) / 2);
+                    if (between != artwork)
+                        throw new InvalidDataException($"{ColorMath.Format(between)} shows between {orientation} cells {index} and {neighbor}.");
+                }
+            }
+            verified += document.CellCount;
+        }
+        return verified;
     }
 
     // Opening a menu leaves it highlighted, so this runs after the editor screenshot rather than inside VerifyEditor.

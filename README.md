@@ -23,9 +23,9 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
   a grey ramp from black to white, then one row per hue shaded dark to light. Colors you add appear below the grid.
 - A solid canvas background under every cell, white on a new canvas and changeable at any time from the Color side bar section or View > Canvas background color. It is saved with the project and can be undone like any other edit.
 - Stroke-level undo/redo, a saved-state indicator, and a prompt before replacing unsaved artwork.
-- Compressed `.hexel` projects and transparent PNG and SVG export.
+- Compressed `.hexel` projects.
 
-The current release supports up to 32 layers, 2,200,000 hexels with neither side over 2048, and 512 palette colors, 256 of which a new project starts with. A 2000 by 1000 canvas is within that and is the size the editor is built to stay responsive at. Layers are limited further on a large canvas by a 256 MB budget for cell data. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. A painting command records the cells it changed, and a structural one - a layer added, hidden, renamed, reordered or made see-through, a palette colour, the canvas background - records the structure only and shares the cells, so neither grows with the size of the canvas. Copy/paste uses an internal cell clipboard. Animation, standard bitmap import, and GIF export are not implemented.
+The current release supports up to 32 layers, 2,200,000 hexels with neither side over 2048, and 512 palette colors, 256 of which a new project starts with. A 2000 by 1000 canvas is within that and is the size the editor is built to stay responsive at. Layers are limited further on a large canvas by a 256 MB budget for cell data. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. A painting command records the cells it changed, and a structural one - a layer added, hidden, renamed, reordered or made see-through, a palette colour, the canvas background - records the structure only and shares the cells, so neither grows with the size of the canvas. Copy/paste uses an internal cell clipboard. Animation, bitmap import, and image export are not implemented.
 
 ## Drawing a large canvas
 
@@ -53,8 +53,6 @@ Across every zoom at 2000 by 1000 the slowest frame is about 19 ms, where cells 
 
 Structural changes were the other thing that did not scale. Recording one copied every cell twice, so on a 2000 by 1000 canvas with three layers a palette colour cost about 12 ms and an undo of it about 6 ms, and at 16 MB an entry the 64 MiB history budget held only four of them. A structural change cannot alter a cell, so its record now shares them: about 1 ms to make and 0.76 ms to undo, and the budget counts what it actually holds. Sharing is safe because history is undone in order, so reaching a structural record means every painting command made after it has already been undone.
 
-Export is unaffected by any of this: it draws the exact outline, and takes as long as it takes.
-
 ## Shortcuts
 
 | Action                              | Shortcut                              |
@@ -77,8 +75,6 @@ Export is unaffected by any of this: it draws the exact outline, and takes as lo
 | Clear selected cells or layer       | Delete                                |
 | Deselect                            | Esc                                   |
 
-Export the artwork using the top-right Export PNG button. File also contains the SVG export. PNG uses a 16-pixel hexagon radius with transparency and no editor grid or canvas background; cells that hold no color stay transparent. A canvas too large for that scales down rather than being refused: at 16 pixels a cell, 2000 by 1000 would be about 59,000 by 25,000 pixels, so the export uses the largest scale that fits inside 64 million pixels. SVG writes one polygon per cell, so a large canvas makes a large file slowly. SVG preserves hexagon geometry and alpha. Layer order, visibility, and opacity affect exports.
-
 ## Build and verification
 
 Install the .NET 10 x64 SDK and PowerShell 7 if they are not already available. Visual Studio is optional. The SDK includes the WPF build tools. NuGet downloads require internet access on the first restore. Dependency versions and lock files are checked into the repository.
@@ -94,7 +90,7 @@ pwsh -File ./Scripts/Publish.ps1
 - Build compiles the complete solution in Release mode with warnings treated as errors.
 - Test builds and runs the xUnit suite in process, without needing VSTest's interprocess service. It covers hex geometry, editing, compositing, selections, undo/redo, layer operations, and project persistence.
 - Validate is the entry point to use while someone is working on this machine, and the one an agent should use. It runs Verify, puts the real window on the validation display, and watches the whole run for anything that would disturb whoever is at the keyboard. See "Validating without disturbing anyone" below.
-- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, checks the PNG and SVG exports, including that nothing shows between neighboring opaque cells, renders the canvas background and samples every cell to confirm it is one solid color, lays out the palette grid and chooses and adds a color through its real controls, draws a canvas at each level of detail and checks that a cell's color lands where that cell is, drives the pointer across the canvas, and checks session logging. It asserts that every check reported, so an application that exits early cannot pass by silence. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
+- Verify also starts a hidden WPF rendering host, renders the real editor, opens the menu bar, lays out the dialogs, saves and reloads the example, draws it and samples every cell to confirm each one's composited color lands at that cell, draws a canvas in both orientations and confirms the background is one solid color under a cell holding no artwork and that nothing shows between neighboring opaque cells, lays out the palette grid and chooses and adds a color through its real controls, draws a canvas at each level of detail and checks that a cell's color lands where that cell is, drives the pointer across the canvas, and checks session logging. It asserts that every check reported, so an application that exits early cannot pass by silence. Its logs and generated artifacts go to a timestamped folder under `LogOutput`. No physical display is used.
 - Publish creates a self-contained application at `Artifacts/Release/HexelEditor.exe`. Copy the entire Release folder to another Windows 11 x64 computer; no separate .NET installation is needed. Publishing uses separate intermediate outputs from development builds.
 
 Scripts store the CLI home, NuGet cache, test temporary files, and build outputs inside the ignored `Artifacts` directory or the projects' ignored `bin` and `obj` folders. The root build and run scripts share the executable path `Source/HexelEditor.Desktop/bin/Release/net10.0-windows10.0.26100.0/win-x64/HexelEditor.exe`. Both accept `-Configuration Debug` for a Debug build. `Run.ps1 -Project 'C:\Artwork\Scene.hexel'` opens a project at startup.
@@ -145,12 +141,12 @@ Two details about Windows worth keeping in mind here. A locked Windows 11 sessio
 
 ## Session logs
 
-Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root, including direct executable launches. `Session.log` records startup, shutdown, project opens and saves, exports, and errors with exception details. Sessions started within the same second wait for the next available timestamp so their logs stay separate. `LogOutput/` is ignored by Git. For a published application copied outside the repository, `LogOutput` is created beside the executable.
+Every editor run creates `LogOutput/yyyy-MM-dd_HH-mm-ss` at the repository root, including direct executable launches. `Session.log` records startup, shutdown, project opens and saves, and errors with exception details. Sessions started within the same second wait for the next available timestamp so their logs stay separate. `LogOutput/` is ignored by Git. For a published application copied outside the repository, `LogOutput` is created beside the executable.
 
 ## Source layout
 
 - `Source/HexelEditor.Core`: document model, axial/offset geometry, six-neighbor algorithms, editing history, example artwork, and project serialization. It has no WPF or Skia dependency.
-- `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, Skia canvas, and image exporters. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control. Cells that share a color are filled as one path, and every cell reaches a fraction of a pixel past its edges, so neighbors overlap rather than meet and no background shows between them when the grid is off.
+- `Source/HexelEditor.Desktop`: WPF interface, pointer and keyboard handling, and Skia canvas. `App.xaml` holds the whole theme: color brushes and the control templates for buttons, inputs, menus, scroll bars, and side bar sections. The canvas uses Skia's software rendering through WPF with viewport culling; each hexel is data, rather than a separate WPF control. Cells that share a color are filled as one path, and every cell reaches a fraction of a pixel past its edges, so neighbors overlap rather than meet and no background shows between them when the grid is off.
 - `Tests/HexelEditor.Tests`: xUnit tests for the editing core.
 - `Build.cmd` / `Build.ps1` and `Run.cmd` / `Run.ps1`: repository-root build and run entry points. Run launches a copy of the build so that editing and building the repository never wait on a running editor.
 - `Scripts`: shared PowerShell helpers, tests, verification, validation, and publishing. The shared helper requires PowerShell 7 or later. `Validate.ps1` is the entry point for checking a change; `DisruptionGuard.ps1` watches a run for interference and answers what the session state is, `IsolatedDesktop.ps1` runs a process on a Win32 desktop of its own, and `Windowing.ps1` measures displays, finds a process's window, and photographs one without activating it.

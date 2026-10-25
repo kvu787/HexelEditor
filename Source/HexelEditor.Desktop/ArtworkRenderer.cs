@@ -1,6 +1,3 @@
-using System.Globalization;
-using System.IO;
-using System.Text;
 using HexelEditor.Core;
 using SkiaSharp;
 
@@ -9,7 +6,6 @@ namespace HexelEditor.Desktop;
 public static class ArtworkRenderer
 {
     public const float CellRadius = 12;
-    private const float ExportScale = 16f / CellRadius;
 
     public static SKRect Bounds(HexDocument document, float radius = CellRadius)
     {
@@ -284,62 +280,5 @@ public static class ArtworkRenderer
         if (seeThrough) canvas.Restore();
         if (!grid || zoom < 0.3) return;
         DrawGrid(canvas, document, zoom);
-    }
-
-    // The largest image that may be written, and what a canvas too big for it is exported at instead.
-    private const int MaximumExportSide = 32768;
-    private const long MaximumExportPixels = 64_000_000;
-
-    // A canvas of two million cells at sixteen pixels a cell would be about 59,000 by 25,000 pixels, which is
-    // one and a half billion and far past what can be written or opened. Rather than refusing, the export
-    // picks the largest scale that fits, so a large canvas exports at a lower resolution instead of not at
-    // all. Small canvases are unaffected and still export at the full sixteen pixels a cell.
-    public static float ExportScaleFor(HexDocument document)
-    {
-        var bounds = Bounds(document);
-        var byPixels = (float)Math.Sqrt(MaximumExportPixels / ((double)bounds.Width * bounds.Height));
-        var bySide = Math.Min(MaximumExportSide / bounds.Width, MaximumExportSide / bounds.Height);
-        return Math.Min(ExportScale, Math.Min(byPixels, bySide));
-    }
-
-    public static void ExportPng(HexDocument document, string path)
-    {
-        var bounds = Bounds(document);
-        var scale = ExportScaleFor(document);
-        var width = (int)Math.Ceiling(bounds.Width * scale) + 2;
-        var height = (int)Math.Ceiling(bounds.Height * scale) + 2;
-        if (width < 1 || height < 1) throw new InvalidOperationException("This canvas has nothing to export.");
-        using var surface = SKSurface.Create(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul)) ?? throw new InvalidOperationException("Could not create the export image.");
-        surface.Canvas.Clear(SKColors.Transparent);
-        surface.Canvas.Translate(1 - bounds.Left * scale, 1 - bounds.Top * scale); surface.Canvas.Scale(scale);
-        Draw(surface.Canvas, document);
-        using var image = surface.Snapshot(); using var data = image.Encode(SKEncodedImageFormat.Png, 100);
-        using var output = File.Create(path); data.SaveTo(output);
-    }
-
-    public static void ExportSvg(HexDocument document, string path)
-    {
-        var bounds = Bounds(document);
-        static string Number(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
-        var builder = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{Number(bounds.Left - 1)} {Number(bounds.Top - 1)} {Number(bounds.Width + 2)} {Number(bounds.Height + 2)}\">\n");
-        // Opaque polygons carry the same overlap as the other outputs, sized for the scale the PNG export uses.
-        // Nothing here can hold a layer the way a canvas can, so cells one can see through stay exact instead:
-        // overlapping those would blend twice and draw a seam of its own, which no viewer's scale would hide.
-        var overlapped = CellRadius + Bleed(ExportScaleFor(document));
-        for (var index = 0; index < document.CellCount; index++)
-        {
-            var color = document.CompositeAt(index);
-            if ((color >> 24) == 0) continue;
-            var radius = (color >> 24) == 255 ? overlapped : CellRadius;
-            var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
-            builder.Append("<polygon points=\"");
-            for (var corner = 0; corner < 6; corner++)
-            {
-                var angle = Math.PI / 180 * (60 * corner + (document.Orientation == HexOrientation.PointyTop ? -30 : 0));
-                builder.Append(Number(x + Math.Cos(angle) * radius)).Append(',').Append(Number(y + Math.Sin(angle) * radius)).Append(' ');
-            }
-            builder.Append($"\" fill=\"#{color & 0xFFFFFF:X6}\" fill-opacity=\"{Number((color >> 24) / 255.0)}\"/>\n");
-        }
-        builder.Append("</svg>\n"); File.WriteAllText(path, builder.ToString(), new UTF8Encoding(false));
     }
 }
