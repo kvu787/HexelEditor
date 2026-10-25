@@ -27,25 +27,6 @@ Build restores NuGet dependencies and creates the Release build. Run exits with 
 
 The current release supports up to 32 layers, 2,200,000 hexels with neither side over 2048, and 512 palette colors, 256 of which a new project starts with. A 2000 by 1000 canvas is within that and is the size the editor is built to stay responsive at. Layers are limited further on a large canvas by a 256 MB budget for cell data. Undo history retains up to 200 commands within a 64 MiB budget, keeping at least the most recent command. A painting command records the cells it changed, and a structural one - a layer added, hidden, renamed, reordered or made see-through, a palette colour, the canvas background - records the structure only and shares the cells, so neither grows with the size of the canvas. Copy/paste uses an internal cell clipboard. Animation, bitmap import, and image export are not implemented.
 
-## Drawing a large canvas
-
-A canvas of two million cells is thirty times the size the editor first allowed, and drawing the cells themselves does not reach it. The first renderer walked every cell each frame to ask whether it was on screen, and every cell that was drew its own antialiased path: about 100 ms a frame at 256 by 256 fitted to the window, and about three seconds at 2000 by 1000. Inverting the layout to get the visible span of columns and rows directly made a frame cost what the window shows rather than what the document holds, and three tiers of falling detail - exact outlines, then a mesh of triangles, then a blit of a cached raster - brought two million cells down to between 5 and 19 ms. That was as far as drawing cells goes, and jaggies below 67% zoom were what the lower tiers cost.
-
-A hex grid is a regular tiling, so which cell a point falls in is closed-form arithmetic rather than a search. The canvas is now one rectangle covering the window, drawn with a shader that runs that arithmetic per pixel and reads the cell's colour from a raster of the composited artwork. Nothing walks the cells at all, so a frame costs what the window costs and nothing for the canvas behind it. Measured on a 2000 by 1000 canvas at a 2456 by 1270 view:
-
-| Renderer                        | Zoomed right in | At the worst zoom | A frame costs          |
-| ------------------------------- | --------------- | ----------------- | ---------------------- |
-| cells drawn on the CPU          | 9 ms            | 133 ms            | what the artwork holds |
-| one shaded rectangle, read back | 1.3 ms          | 1.3 ms            | what the window shows  |
-
-Of that 1.3 ms, 0.04 ms is the drawing and the rest is reading the frame back into a bitmap. The readback is there because WPF is handed a bitmap either way, and because it lets the verification checks sample a frame of the renderer the editor really draws with.
-
-The raster holds the composited artwork at two pixels a cell, and only the cells that changed are recomposited, so a brush stroke costs the cells it touched and panning or zooming re-uploads nothing at all. Two pixels rather than one because alternate rows of a hex grid sit half a cell across: at one pixel that offset cannot be stored and the rows would be drawn in the wrong places.
-
-The shader takes one sample a pixel, so cell edges are hard at every zoom, and the grid, drawn from the distance to the nearest cell edge, is exact at every zoom. There is no second renderer and no software fallback: if the GPU cannot provide one, the editor says why and refuses to start rather than opening a window whose canvas cannot draw.
-
-Structural changes were the other thing that did not scale. Recording one copied every cell twice, so on a 2000 by 1000 canvas with three layers a palette colour cost about 12 ms and an undo of it about 6 ms, and at 16 MB an entry the 64 MiB history budget held only four of them. A structural change cannot alter a cell, so its record now shares them: about 1 ms to make and 0.76 ms to undo, and the budget counts what it actually holds. Sharing is safe because history is undone in order, so reaching a structural record means every painting command made after it has already been undone.
-
 ## Shortcuts
 
 | Action                              | Shortcut                              |
