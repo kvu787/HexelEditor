@@ -1186,3 +1186,145 @@ Modern GPUs and Blender both do the Phong variety: interpolate the normal, run t
 `facingRatio = clamp(normal.z, 0.0, 1.0)` is "how directly does this point face the camera". With flat shading, every pixel on a face shares one `normal.z`, so your Schlick ramp produces **one flat tone per facet** -- the monkey would come out as a mosaic of solid patches.
 
 The smooth gradients in your README images exist because the normals are interpolated. Your whole look is built on top of smooth shading; it's just that Blender did that part before your shader ever ran.
+
+## User
+
+okay, let's rewind and get back to the task at hand, which is improving the perf of hexel editor and ensuring it produces the visuals that i want.
+
+re-answer this question:
+let's say i have a hex grid with a color for each hex cell and 4 triangles for each hex cell. there is also 32 bit float that basically controls the "zoom level". what is the simplest way this is performantly rendered to a 2560x1440 screen?
+
+## Assistant
+
+Your original instinct was right, so here it is your way: a list of triangles and a list of colours, uploaded once, drawn with one call per frame.
+
+### Build it once
+
+Two buffers, both written at startup and then left alone.
+
+**Positions.** For each cell, six corners in world space:
+
+```
+for each cell (x, y):
+    centre = HexCentre(x, y)
+    for k in 0..5:
+        positions[cell*6 + k] = centre + Corner[k]
+```
+
+**Colours.** Six entries per cell, all the same value -- one per vertex, because the GPU has no per-triangle slot:
+
+```
+for each cell (x, y):
+    for k in 0..5:
+        colours[cell*6 + k] = cells[x, y]
+```
+
+Plus an index buffer with the fan, `0,1,2, 0,2,3, 0,3,4, 0,4,5` offset by `cell*6`.
+
+Keep positions and colours in **separate** buffers rather than interleaved. It costs nothing and it means a cell's six colours are 24 contiguous bytes, so painting is one small write instead of six scattered ones.
+
+|                 | 500 x 250 | 2000 x 1000 |
+| --------------- | --------: | ----------: |
+| Cells           |   125,000 |   2,000,000 |
+| Vertices        |   750,000 |  12,000,000 |
+| Triangles       |   500,000 |   8,000,000 |
+| Positions (8 B) |      6 MB |       96 MB |
+| Colours (4 B)   |      3 MB |       48 MB |
+| Indices (4 B)   |      6 MB |       96 MB |
+| **Total VRAM**  | **15 MB** |  **240 MB** |
+
+Both are unremarkable for a modern card. You already proved the large one works -- that is what your `.blend` is.
+
+### Per frame
+
+```
+SetUniform("uScale",  zoom-derived scale);
+SetUniform("uOffset", pan);
+DrawElements(TRIANGLES, indexCount);
+```
+
+That is the whole per-frame CPU cost: about 16 bytes and one call, whether the canvas is 500 x 250 or 2000 x 1000, and whether you are showing nine cells or two million.
+
+### The two shaders
+
+```glsl
+// VERTEX -- runs once per vertex
+uniform vec2 uScale;      // your zoom float, converted to clip-space units
+uniform vec2 uOffset;     // pan
+
+in vec2 aPosition;
+in vec4 aColor;
+
+flat out vec4 vColor;     // flat: do not interpolate, each triangle is one colour
+
+void main() {
+    gl_Position = vec4(aPosition * uScale + uOffset, 0.0, 1.0);
+    vColor = aColor;
+}
+```
+
+```glsl
+// FRAGMENT -- runs once per covered pixel
+flat in vec4 vColor;
+out vec4 fragColor;
+
+void main() {
+    fragColor = vColor;
+}
+```
+
+One multiply-add in the vertex stage, one assignment in the fragment stage. Your Godot paint shader does strictly more work per pixel than this does.
+
+### Where the zoom float goes
+
+Into `uScale`, and nowhere else. Changing the zoom is an 8-byte write to a uniform. No geometry is rebuilt, nothing is re-uploaded, no CPU loop runs.
+
+That is the entire answer to "why is this fast". The current renderer spends 9 to 133 ms per frame rebuilding paths that did not change; this spends 16 bytes.
+
+### What it costs at 2560 x 1440
+
+- 3.7M pixels, fragment shader of one instruction -- effectively free
+- 8M triangles at full zoom-out -- a few ms of triangle setup
+- zoomed in, most triangles are clipped before rasterisation -- sub-millisecond
+
+Single-digit milliseconds at the worst, and you have already observed exactly this in Blender.
+
+### The visuals
+
+Turn on **4x MSAA** when you create the framebuffer. One flag.
+
+That is the part that fixes your original complaint. MSAA antialiases every edge at every zoom level, uniformly, in hardware. The three-tier system in `ArtworkRenderer` exists to buy back CPU time and the jaggies are what it costs you; none of that reasoning survives the move to a GPU, so all three tiers collapse into this one path.
+
+Skip the depth buffer -- it is 2D and nothing overlaps -- and skip blending if cells are opaque. Both are pure bandwidth you do not need.
+
+### Painting a cell
+
+The one way this differs from Blender's static mesh. When cell `n` changes colour:
+
+```
+colourBuffer.Update(offset: n * 6 * 4, bytes: 24);   // its six vertices
+```
+
+A brush stroke is a rectangle of cells, and because cells are laid out row by row, that is one contiguous run per row. The same shape of update as `ArtworkCache.MarkDirty` already does.
+
+Positions are never touched.
+
+### Landing it in HexelEditor
+
+The useful thing I found: **`opentk.glwpfcontrol` is already restored in your repo.** `SkiaSharp.Views.WPF` depends on it transitively, so `GLWpfControl` is available today with no new package reference. It composites as an ordinary WPF element -- no airspace problem, no `WindowsFormsHost`.
+
+So the shape of the change is:
+
+1. Host a `GLWpfControl` where `HexCanvas` currently sits.
+2. Build the three buffers when a document is opened or resized.
+3. Write the ~15 lines of shader above.
+4. On paint, update the colour sub-range.
+5. On pan/zoom, write two uniforms.
+
+The overlays -- cursor ring, selection highlight, the hex grid lines -- are a few dozen outlines at most and are not a performance concern wherever you put them.
+
+Two things to settle before committing to it. The validation harness renders offscreen in a hidden `HwndSource` on its own Win32 desktop, and a GL context there needs proving first. And you will want to keep the Skia path as a fallback for machines without a usable GPU.
+
+### One thing deliberately left out
+
+I led with instancing last time and it obscured the idea. Ignore it for now. Once this is working you can notice that every position in that 96 MB buffer is computed from two loop counters, and delete the buffer by moving those lines into the vertex shader. That is a refactor you make later, not a thing you need to understand now.
