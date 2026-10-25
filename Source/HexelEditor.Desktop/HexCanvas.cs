@@ -15,6 +15,8 @@ public sealed class HexCanvas : SKElement
     private const float MaximumZoom = 30f;
     private EditorSession? session;
     private readonly ArtworkCache artwork = new();
+    private GpuHexRenderer? gpu;
+    private bool gpuAttempted;
     private HexCoordinate? hover;
     private HexCoordinate? start;
     private HexCoordinate? previous;
@@ -30,6 +32,19 @@ public sealed class HexCanvas : SKElement
     public uint ForegroundColor { get; set; } = 0xFF000000;
     public int BrushRadius { get; set; }
     public bool ShowGrid { get; set; } = true;
+
+    // Antialiasing is the shader supersampling its cell lookup, so it is a property of the GPU
+    // renderer rather than of any paint. With it off the grid shows the hard pixel edges that a
+    // single sample a pixel gives, which is what the CPU mesh tier always did.
+    public bool Antialias
+    {
+        get => antialias;
+        set { antialias = value; if (gpu != null) gpu.Antialias = value; InvalidateVisual(); }
+    }
+    private bool antialias = true;
+
+    /// <summary>True once the GPU renderer is running; false means the CPU fallback is in use.</summary>
+    public bool UsingGpu => gpu != null;
     public bool FilledShapes { get; set; }
     public bool SpacePressed { get; set; }
     public HexCoordinate? HoverCoordinate => hover;
@@ -94,15 +109,52 @@ public sealed class HexCanvas : SKElement
         var canvas = args.Surface.Canvas;
         canvas.Clear(new SKColor(243, 243, 243));
         if (session == null || ActualWidth <= 0) return;
-        canvas.Scale((float)(args.Info.Width / ActualWidth), (float)(args.Info.Height / ActualHeight));
+        var dpi = (float)(args.Info.Width / ActualWidth);
+
+        canvas.Save();
+        canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
         using (var dot = new SKPaint { Color = new SKColor(222, 222, 222), IsAntialias = true })
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
-        canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
+        canvas.Restore();
+
         // Drained every frame whatever the zoom, so the raster never misses an edit made while it was not
         // the thing being drawn.
         artwork.MarkDirty(session.TakeDirtyCells());
-        ArtworkRenderer.Draw(canvas, session.Document, true, ShowGrid, Zoom, artwork);
+
+        // The GL context is built on the first frame rather than in the constructor, so a machine
+        // without a usable GPU costs one failed attempt and then falls back quietly.
+        if (!gpuAttempted)
+        {
+            gpuAttempted = true;
+            // A way out without a rebuild, for a machine where the GPU path misbehaves.
+            if (Environment.GetEnvironmentVariable("HEXEL_DISABLE_GPU") != "1")
+                gpu = GpuHexRenderer.TryCreate(App.Log.Write);
+            else
+                App.Log.Write("GPU renderer disabled by HEXEL_DISABLE_GPU.");
+            if (gpu != null) gpu.Antialias = antialias;
+        }
+
+        // The artwork is one shaded rectangle covering the window, drawn at device resolution so
+        // it stays crisp on a scaled display, and blitted back at 1:1.
+        var rendered = gpu?.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
+            Zoom * dpi, offsetX * dpi, offsetY * dpi, ShowGrid);
+        if (rendered != null)
+        {
+            // 1:1, so nearest sampling is both exact and the cheapest path.
+            canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
+        }
+        else
+        {
+            canvas.Save();
+            canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
+            canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
+            ArtworkRenderer.Draw(canvas, session.Document, true, ShowGrid, Zoom, artwork);
+            canvas.Restore();
+        }
+
+        canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
+        canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
         using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
         using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(0, 95, 184, 40) };

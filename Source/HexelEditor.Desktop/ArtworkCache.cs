@@ -32,6 +32,10 @@ public sealed class ArtworkCache : IDisposable
     // The raster covers the whole document, so it is addressed in columns and rows and scaled on the way out.
     public SKBitmap? Raster => raster;
 
+    // Bumped whenever a cell's colour actually changed. A renderer holding a GPU copy of the
+    // raster watches this so that panning and zooming, which change no cell, re-upload nothing.
+    public int Version { get; private set; }
+
     public void InvalidateEverything() => everythingDirty = true;
 
     // Dirt is accumulated rather than applied at once, because a frame drawn at a zoom that does not use the
@@ -140,6 +144,7 @@ public sealed class ArtworkCache : IDisposable
             }
         }
         raster.NotifyPixelsChanged();
+        Version++;
     }
 
     private void Release()
