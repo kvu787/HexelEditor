@@ -59,6 +59,8 @@ public static class ProjectFile
         catch (JsonException exception) { throw new InvalidDataException("The document manifest is invalid.", exception); }
         if (metadata.Format != 1 || metadata.Width is < 1 or > HexDocument.MaximumDimension || metadata.Height is < 1 or > HexDocument.MaximumDimension || !Enum.IsDefined(metadata.Orientation))
             throw new InvalidDataException("The project format or canvas dimensions are invalid.");
+        if ((long)metadata.Width * metadata.Height > HexDocument.MaximumCellCount)
+            throw new InvalidDataException($"The project's canvas of {metadata.Width} by {metadata.Height} holds more than the {HexDocument.MaximumCellCount:N0} hexels a canvas may.");
         if (metadata.Layers == null || metadata.Palette == null || metadata.Name == null || metadata.Name.Length > 256 ||
             metadata.Layers.Length is < 1 or > HexDocument.MaximumLayers ||
             metadata.Palette.Length is < 1 or > HexDocument.MaximumPaletteColors ||
@@ -67,6 +69,11 @@ public static class ProjectFile
         // A manifest written before the canvas had a background color of its own leaves that canvas on the default white.
         var document = new HexDocument(metadata.Width, metadata.Height, metadata.Orientation)
         { Name = metadata.Name, BackgroundColor = metadata.BackgroundColor ?? HexDocument.DefaultBackgroundColor };
+        // The layer count was checked against the fixed limit above; this is the budget for cell memory,
+        // which on a large canvas is reached well before that limit, and the editor would not let a project
+        // this large be built. Checked before any layer is allocated.
+        try { document.ValidateLayerCount(metadata.Layers.Length); }
+        catch (InvalidOperationException exception) { throw new InvalidDataException(exception.Message, exception); }
         document.Palette.Clear(); document.Palette.AddRange(metadata.Palette);
         document.Layers.Clear();
         for (var layerIndex = 0; layerIndex < metadata.Layers.Length; layerIndex++)
