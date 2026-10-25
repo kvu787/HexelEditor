@@ -19,7 +19,7 @@ public sealed class EditorSession
     private long historyBytes;
     public HexDocument Document { get; private set; }
     public int ActiveLayer { get; private set; }
-    public HashSet<int> Selection { get; } = [];
+    public CellSelection Selection { get; }
     public bool IsDirty => revision != savedRevision || stroke?.Count > 0;
     public bool CanUndo => undo.Count > 0;
     public bool CanRedo => redo.Count > 0;
@@ -28,7 +28,11 @@ public sealed class EditorSession
     public string RedoLabel => redo.Count > 0 ? redo[^1].Label : "";
     public event Action<EditorChange>? Changed;
 
-    public EditorSession(HexDocument document) => Document = document;
+    public EditorSession(HexDocument document)
+    {
+        Document = document;
+        Selection = new CellSelection(document.CellCount);
+    }
     public void Notify(EditorChange change) => Changed?.Invoke(change);
     public void MarkSaved() { savedRevision = revision; Notify(EditorChange.History); }
     public void SelectLayer(int index) { EndStroke(); ActiveLayer = Math.Clamp(index, 0, Document.Layers.Count - 1); Notify(EditorChange.Structure); }
@@ -172,18 +176,15 @@ public sealed class EditorSession
         var right = Math.Min(Document.Width - 1, Math.Max(columnA, columnB));
         var top = Math.Max(0, Math.Min(rowA, rowB));
         var bottom = Math.Min(Document.Height - 1, Math.Max(rowA, rowB));
-        for (var row = top; row <= bottom; row++)
-            for (var column = left; column <= right; column++) Selection.Add(row * Document.Width + column);
+        for (var row = top; row <= bottom; row++) Selection.AddRange(row * Document.Width + left, row * Document.Width + right);
         Notify(EditorChange.Selection);
     }
 
     public void SelectAll()
     {
         EndStroke();
-        Selection.Clear();
         selectionPivot = null;
-        Selection.EnsureCapacity(Document.CellCount);
-        for (var index = 0; index < Document.CellCount; index++) Selection.Add(index);
+        Selection.SelectAll();
         Notify(EditorChange.Selection);
     }
     public void ClearSelection() { EndStroke(); Selection.Clear(); selectionPivot = null; Notify(EditorChange.Selection); }
@@ -223,8 +224,7 @@ public sealed class EditorSession
     {
         if (!CanPaint || Selection.Count == 0) return;
         var clipboard = CopySelection();
-        var left = Selection.Min(index => index % Document.Width);
-        var top = Selection.Min(index => index / Document.Width);
+        if (!Selection.TryBounds(Document.Width, out var left, out var top)) return;
         EndStroke();
         BeginStroke(captureSelection: true);
         foreach (var index in Selection) SetPixel(index, 0);
