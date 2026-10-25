@@ -54,6 +54,7 @@ public sealed class GpuHexRenderer : IDisposable
     private int surfaceWidth, surfaceHeight;
     private SKBitmap? readback;
     private SKImage? colours;
+    private ArtworkCache? colourSource;
     private int colourVersion = -1;
 
     // The one request in flight. The caller blocks until it is answered, so a single slot is all
@@ -197,10 +198,14 @@ public sealed class GpuHexRenderer : IDisposable
             // half-cell offset of alternate rows lands on exactly one texel. It is only re-uploaded
             // when a cell actually changed, so panning and zooming upload nothing.
             var raster = cache.Refresh(document);
-            if (colours == null || colourVersion != cache.Version)
+            // A version counts the changes within one cache, so it says nothing across two of them: a second
+            // cache reaching a version this one has already seen would leave the first cache's texture in
+            // place. Which cache the texture came from is therefore part of whether it is still current.
+            if (colours == null || colourVersion != cache.Version || !ReferenceEquals(colourSource, cache))
             {
                 colours?.Dispose();
                 colours = SKImage.FromBitmap(raster);
+                colourSource = cache;
                 colourVersion = cache.Version;
             }
 
@@ -236,6 +241,7 @@ public sealed class GpuHexRenderer : IDisposable
     private void Release()
     {
         colours?.Dispose();
+        colourSource = null;
         readback?.Dispose();
         surface?.Dispose();
         effect?.Dispose();
