@@ -57,19 +57,38 @@ display's. It is now the whole of a frame -- everything around it costs less tha
 but a frame is 1.3 ms against the 8.4 ms a 119 Hz display allows, so the renderer is no longer what limits
 anything.
 
-Removing it means `SKGLElement`, and that is a different kind of change from the nine above. The shader and
-its two textures would have to live in the element's own context on the interface thread, where this
-renderer's history records a GL context stopping the whole window from painting. The pixel-exact checks call
-`GpuHexRenderer.Render` directly, so they would keep the offscreen path and would then be verifying a
-renderer the window does not use. And the display pass captures with `PrintWindow`, which may or may not see
-a surface composited through `D3DImage` -- that has to be tried, not assumed.
+Removing it means `SKGLElement`. That was tried, and it cannot be done without dismantling the renderer's
+threading model first.
+
+`SKGLElement` derives from `GLWpfControl`, and `GLWpfControl` builds its context by creating an OpenTK
+**GLFW** window. `GpuHexRenderer` has already created one, on the render thread it owns, and GLFW allows
+windows only from the thread that first used it. So the element's constructor throws:
+
+```
+GLFWException: Can only create windows on the Glfw main thread. (Thread from which Glfw was first created).
+   at OpenTK.Wpf.DxGlContext.GetOrCreateSharedOpenGLContext
+   at OpenTK.Wpf.GLWpfControl.Start
+   at SkiaSharp.Views.WPF.SKGLElement.Initialize
+```
+
+The canvas never gets built, so the window never opens. This is the same constraint `GpuHexRenderer.Shared`
+already records as its reason for being a singleton; what is new is that it applies to the WPF element too,
+because that element gets its context the same way.
+
+The two cannot coexist, so removing the readback means there being one GL context, owned by the element, on
+the interface thread -- which is where this renderer's history records a context stopping the whole window
+from painting -- with the offscreen path the pixel-exact checks depend on rendered through it as well. That
+is a change to how the editor is put together rather than an optimisation, and it was not made.
+
+The question of whether `PrintWindow` can capture a surface composited through `D3DImage` was never reached,
+and remains unanswered.
 
 **The whole-canvas editing operations are still the slowest things here**: flood fill 57 ms, move a
 selection over the canvas 47 ms, clear every cell 24 ms, rotate 32 ms. All of them run on the thread handling
 input, with no feedback while they do. What is left in them is the per-cell work itself rather than anything
 around it.
 
-## A caution the hard way
+## Two cautions the hard way
 
 The sub-rectangle upload was written twice. The first version kept a GL texture of its own and updated it
 with `glTexSubImage2D`, which is the direct way to say it, and it was fastest: 0.015 ms against the 0.08 ms
@@ -82,6 +101,13 @@ that commit exactly.
 
 Raw GL calls into a context Skia is also driving are not worth what they cost here. The second version does
 the same work through a surface Skia owns, for 0.065 ms more a frame.
+
+The second caution is from the `SKGLElement` attempt above. When the canvas failed to build, the editor's
+unhandled-exception handler put a message box on whichever display Windows chose and gave it the foreground
+-- during a run launched with `--show-without-focus`, which exists precisely so that a run can share a desk
+with the person using it. A run nobody is watching has nobody to answer a dialog, so it now logs and exits
+instead, as the headless modes already did. The disruption watch is what noticed; it is also what the watch
+is for.
 
 ## The ten hotspots as they were found
 
