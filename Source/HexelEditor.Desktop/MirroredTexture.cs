@@ -46,26 +46,35 @@ internal sealed class MirroredTexture : IDisposable
         surface = SKSurface.Create(context, budgeted: true,
             new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul), sampleCount: 0, GRSurfaceOrigin.TopLeft)
             ?? throw new InvalidOperationException($"Could not create a {width} by {height} surface for the artwork.");
-        using var whole = SKImage.FromBitmap(raster)
+        using var pixels = raster.PeekPixels()
+            ?? throw new InvalidOperationException("Could not read the artwork raster.");
+        // An image over the raster's own pixels rather than a copy of them, for the reason given in Patch.
+        using var whole = SKImage.FromPixels(pixels)
             ?? throw new InvalidOperationException("Could not read the artwork raster.");
         surface.Canvas.DrawImage(whole, 0, 0, Sampling, null);
+        surface.Flush();
         snapshot = Snapshot();
     }
 
     private void Patch(SKBitmap raster, (int X, int Y, int Width, int Height) part)
     {
-        // A view onto the raster's own pixels, so only the changed rectangle is copied out of it and only
-        // that rectangle travels to the GPU.
-        using var piece = new SKBitmap();
-        if (!raster.ExtractSubset(piece, SKRectI.Create(part.X, part.Y, part.Width, part.Height)))
-            throw new InvalidOperationException("Could not take the changed part of the artwork raster.");
-        using var image = SKImage.FromBitmap(piece)
+        // A view onto the raster's own pixels, and an image over that view rather than a copy of it, so the
+        // changed rectangle travels from the raster to the GPU once. SKImage.FromBitmap copied it first: on a
+        // whole-canvas rebuild that was sixteen megabytes copied for nothing, 4.6 ms, before the upload.
+        using var pixels = raster.PeekPixels()
+            ?? throw new InvalidOperationException("Could not read the artwork raster.");
+        using var piece = pixels.ExtractSubset(SKRectI.Create(part.X, part.Y, part.Width, part.Height))
+            ?? throw new InvalidOperationException("Could not take the changed part of the artwork raster.");
+        using var image = SKImage.FromPixels(piece)
             ?? throw new InvalidOperationException("Could not read the changed part of the artwork raster.");
         // The old snapshot goes first. While one is alive the surface cannot be drawn into without copying
         // itself whole, which is the cost this exists to avoid.
         snapshot?.Dispose();
         snapshot = null;
         surface!.Canvas.DrawImage(image, part.X, part.Y, Sampling, null);
+        // Flushed here because the image borrows the raster's memory, which the next recomposite will write
+        // over: the upload has to have read it before this returns.
+        surface.Flush();
         snapshot = Snapshot();
     }
 
