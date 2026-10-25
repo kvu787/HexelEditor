@@ -1675,3 +1675,70 @@ process killed, the clip released with `ClipCursor(NULL)` back to the full deskt
 [  ok  ] Display pass on NE18NZ2 - 3840 x 2400, 57 distinct colors
 [  ok  ] Did not disturb the machine
 ```
+
+## User
+
+![The New hexel canvas dialog, Columns showing 200 and Rows 100](Images/2026-10-24_21-03_UTC%20ZoomRenderingTiersAndBlenderHexGridScript%2010.png)
+
+it seems like i can't input more than 3 digits. fix this.
+
+also, do a end-to-end review/analysis of the whole repo and app and do any fixes/refactoring as you see fit.
+
+## Assistant
+
+### The digit limit
+
+`NewCanvasDialog` had `MaxLength = 3` on the columns and rows boxes while the label beside them
+read `Columns (1-2048)`. The largest canvas the editor supports could not be typed in.
+
+The limit now comes from `HexDocument.MaximumDimension.ToString().Length` rather than being
+written out next to the constant, so the two cannot drift again. `VerifyDialogs` gained a check,
+because nothing about a `MaxLength` is visible until someone tries to type past it -- which is
+exactly how this survived. Putting the bug back makes verification fail with:
+
+```
+A New canvas field accepts 3 characters, too few for 2048.
+```
+
+### What the review turned up
+
+**GLFW allows exactly one renderer per process, and only by accident were we obeying it.** Found
+by writing a benchmark for the painting path: its second iteration failed with "Can only create
+windows on the Glfw main thread. (Thread from which Glfw was first created)." GLFW binds to the
+thread that first creates a window, and every `GpuHexRenderer` wants a thread of its own, so a
+second one can never get a context -- it falls back to the CPU path silently for the rest of the
+session. Only one was ever built, so nothing went wrong. The single instance is now the public way
+in, `TryCreate` is private, and the reason sits next to it.
+
+**Nothing released the GL context or the canvas raster.** The context, its thread and its GPU
+surfaces had no owner, and `ArtworkCache` pins its pixels in a `GCHandle` for as long as it lives.
+The application disposes the renderer on exit, which is the only scope outliving every window, and
+the canvas releases its raster on `Dispatcher.ShutdownStarted` -- not `Unloaded`, which also fires
+when a control is merely reparented.
+
+**Painting is not worth optimising.** The one path never measured. A brush stroke dirties cells
+every frame, so the colour texture is re-uploaded, and I expected that to dominate. It does not:
+painting costs about what panning does on a 500 x 250 canvas. No change made.
+
+### What I looked at and deliberately left
+
+- `ProjectFile` -- properly defensive already: manifest size limits, dimension and layer
+  validation, an exact cell-buffer length check, and a clear message for each.
+- `EditorSession` -- coherent surface, no markers, covered by the tests.
+- `ArtworkRenderer`'s three tiers -- still correct as the CPU fallback and still covered by
+  `VerifyRenderTiers`. Its jaggies and rectangles remain, which is acceptable for a fallback.
+- Overlay antialiasing on the cursor ring, selection highlight and background dots -- interface
+  rather than canvas.
+- No `TODO`, `FIXME` or `HACK` anywhere in `Source` or `Tests`.
+
+### Validation
+
+`pwsh -File ./Scripts/Validate.ps1`:
+
+```
+[  ok  ] Build, tests and hidden-host verification
+[  ok  ] Display pass on NE18NZ2 - 3840 x 2400, 57 distinct colors
+[  ok  ] Did not disturb the machine
+```
+
+62 tests pass. Commits `930f2ac` and `3a7270b`.
