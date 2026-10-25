@@ -142,7 +142,7 @@ public sealed class HexCanvas : SKElement
             canvas.Save();
             canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
             canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
-            ArtworkRenderer.Draw(canvas, session.Document, true, ShowGrid, Zoom, artwork);
+            ArtworkRenderer.Draw(canvas, session.Document, ShowGrid, Zoom, artwork);
             canvas.Restore();
         }
 

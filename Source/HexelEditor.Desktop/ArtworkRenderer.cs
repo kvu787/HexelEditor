@@ -91,8 +91,8 @@ public static class ArtworkRenderer
         : cellPixels < RasterBelowPixels ? CellDetail.Raster
         : CellDetail.Mesh;
 
-    public static void Draw(SKCanvas canvas, HexDocument document, bool background = false, bool grid = false,
-        float zoom = 1, ArtworkCache? cache = null)
+    public static void Draw(SKCanvas canvas, HexDocument document, bool grid = false, float zoom = 1,
+        ArtworkCache? cache = null)
     {
         var cellPixels = (float)(Math.Sqrt(3) * CellRadius * CanvasScale(canvas));
         switch (DetailFor(cellPixels, cache != null))
@@ -101,10 +101,10 @@ public static class ArtworkRenderer
                 DrawRaster(canvas, document, cache!);
                 break;
             case CellDetail.Mesh:
-                DrawMesh(canvas, document, background);
+                DrawMesh(canvas, document);
                 break;
             default:
-                DrawExact(canvas, document, background, grid, zoom);
+                DrawExact(canvas, document, grid, zoom);
                 return;
         }
         // A grid of lines closer together than a pixel is only a grey wash, which is why it stops down there.
@@ -124,16 +124,13 @@ public static class ArtworkRenderer
 
     // Four triangles a cell, every visible cell in one call per batch, flat colours and no antialiasing.
     // Cells meet exactly here instead of overlapping, so there is no seam to hide and nothing blends twice.
-    private static void DrawMesh(SKCanvas canvas, HexDocument document, bool background)
+    private static void DrawMesh(SKCanvas canvas, HexDocument document)
     {
         var viewport = canvas.LocalClipBounds;
         var (minColumn, minRow, maxColumn, maxRow) = VisibleCells(document, viewport);
         if (minColumn > maxColumn || minRow > maxRow) return;
-        if (background)
-        {
-            using var backgroundPaint = new SKPaint { Color = new SKColor(document.BackgroundColor) };
-            canvas.DrawRect(viewport, backgroundPaint);
-        }
+        using var backgroundPaint = new SKPaint { Color = new SKColor(document.BackgroundColor) };
+        canvas.DrawRect(viewport, backgroundPaint);
         // Every cell is the same shape in a different place, so its corner offsets are worked out once here
         // rather than from sine and cosine per cell.
         var cellPixels = (float)(Math.Sqrt(3) * CellRadius * CanvasScale(canvas));
@@ -236,7 +233,7 @@ public static class ArtworkRenderer
         canvas.DrawPath(grid, outline);
     }
 
-    private static void DrawExact(SKCanvas canvas, HexDocument document, bool background, bool grid, float zoom)
+    private static void DrawExact(SKCanvas canvas, HexDocument document, bool grid, float zoom)
     {
         var visible = canvas.LocalClipBounds;
         var (minColumn, minRow, maxColumn, maxRow) = VisibleCells(document, visible);
@@ -253,7 +250,7 @@ public static class ArtworkRenderer
             var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CellRadius);
             if (!IsVisible(visible, x, y)) continue;
             // The background layer lies under every cell, so a cell that holds no color shows it instead.
-            if (background) backgroundCells.AddPath(cell, (float)x, (float)y);
+            backgroundCells.AddPath(cell, (float)x, (float)y);
             var color = document.CompositeAt(index);
             if ((color >> 24) == 0) continue;
             if (!groups.TryGetValue(color, out var group))
@@ -272,7 +269,7 @@ public static class ArtworkRenderer
             canvas.DrawPath(filled, fill);
         }
         // All of the background goes down first, so that no cell's overlap paints over the artwork of its neighbor.
-        if (background) FillCells(backgroundCells, document.BackgroundColor);
+        FillCells(backgroundCells, document.BackgroundColor);
         // Cells one can see through would blend twice where they overlap and draw their own seam, a darker one.
         // Collecting them in a layer, where each cell replaces what it covers, leaves one cell's color per pixel.
         if (seeThrough) { canvas.SaveLayer(); fill.BlendMode = SKBlendMode.Src; }

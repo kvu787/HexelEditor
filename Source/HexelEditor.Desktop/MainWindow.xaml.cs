@@ -482,7 +482,7 @@ public partial class MainWindow : Window
             ?? throw new InvalidOperationException("Could not create the artwork verification image.");
         surface.Canvas.Clear(SkiaSharp.SKColors.Transparent);
         surface.Canvas.Translate(1 - bounds.Left, 1 - bounds.Top);
-        ArtworkRenderer.Draw(surface.Canvas, document, background: true);
+        ArtworkRenderer.Draw(surface.Canvas, document);
         using var image = surface.Snapshot();
         return SkiaSharp.SKBitmap.FromImage(image);
     }
@@ -816,7 +816,7 @@ public partial class MainWindow : Window
                 surface.Canvas.Clear(SkiaSharp.SKColors.White);
                 surface.Canvas.Translate(side / 2f - (float)x * zoom, side / 2f - (float)y * zoom);
                 surface.Canvas.Scale(zoom);
-                ArtworkRenderer.Draw(surface.Canvas, document, background: true, grid: false, zoom: zoom, cache: cache);
+                ArtworkRenderer.Draw(surface.Canvas, document, grid: false, zoom: zoom, cache: cache);
                 using var image = surface.Snapshot();
                 using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
                 var sample = (uint)bitmap.GetPixel(side / 2, side / 2);
