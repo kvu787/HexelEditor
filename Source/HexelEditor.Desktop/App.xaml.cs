@@ -70,6 +70,24 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var placement = ParsePlacement(e.Args);
+        // The shader is the only thing that draws the canvas. Settled before there is a window, because the
+        // alternative is an editor that opens, looks ordinary, and has nothing in the middle of it: the
+        // failure belongs at the start where it can be read, not on the first frame where it cannot.
+        if (GpuHexRenderer.Shared(Log.Write) == null)
+        {
+            var reason = GpuHexRenderer.Unavailable ?? "The GPU renderer is unavailable.";
+            Log.Write($"Refusing to start: {reason}");
+            // A run that was never meant to be seen has nobody to answer a dialog: verification has no
+            // foreground at all, and a window placed on a display nobody watches would leave a box sitting
+            // there unread. For those the session log and the exit code carry the refusal.
+            if (!verifying && placement == null)
+                MessageBox.Show(
+                    $"{reason}\n\nHexel Editor draws its canvas with a GPU shader and has no software fallback, so it cannot open.",
+                    "Hexel Editor", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(2);
+            return;
+        }
         var window = new MainWindow();
         MainWindow = window;
         if (verifying)
@@ -117,7 +135,7 @@ public partial class App : Application
             Shutdown();
             return;
         }
-        if (ParsePlacement(e.Args) is { } placement)
+        if (placement is { } bounds)
         {
             // Placing the window from SourceInitialized puts it on the wanted display before its first frame,
             // so it never appears anywhere else first, and ShowActivated leaves the keyboard and mouse with
@@ -128,7 +146,7 @@ public partial class App : Application
             // the window is ever denied the foreground, which is how Windows answers a refused activation.
             window.ShowInTaskbar = false;
             KeepFocusAway = true;
-            window.SourceInitialized += (_, _) => Place(window, placement);
+            window.SourceInitialized += (_, _) => Place(window, bounds);
         }
         window.Show();
         var project = e.Args.FirstOrDefault(File.Exists);

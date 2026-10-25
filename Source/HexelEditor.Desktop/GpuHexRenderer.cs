@@ -8,11 +8,11 @@ namespace HexelEditor.Desktop;
 // Draws the whole canvas as one rectangle, with a shader that works out which cell each pixel
 // falls in rather than drawing any cells at all.
 //
-// The tiered renderer in ArtworkRenderer costs what the artwork costs: it walks visible cells,
-// builds paths or vertex arrays for them, and rasterises those on the CPU. Measured on a two
-// million cell canvas at a 2456 by 1270 view, that is 9 ms zoomed right in and 133 ms at the zoom
-// where the most cells are visible, and the three detail tiers exist to claw some of it back. The
-// jaggies below 67% zoom are what they cost.
+// This is the only renderer. What came before it drew the cells themselves on the CPU, which costs
+// what the artwork costs: it walked the visible cells, built paths or vertex arrays for them, and
+// rasterised those. Measured on a two million cell canvas at a 2456 by 1270 view, that was 9 ms
+// zoomed right in and 133 ms at the zoom where the most cells are visible, and it carried three
+// tiers of falling detail to claw some of that back, at the price of jaggies below 67% zoom.
 //
 // Every cell edge is hard: one sample a pixel, no antialiasing anywhere in this file.
 //
@@ -24,14 +24,15 @@ namespace HexelEditor.Desktop;
 // Why read back rather than present the GPU surface directly: SKElement hands WPF a bitmap, and
 // the verification harness captures the window with RenderTargetBitmap, which cannot see GPU
 // content at all. Reading the pixels into a bitmap keeps one rendering path for the real window
-// and for the headless checks, and 1.3 ms is affordable where 133 ms was not.
+// and for the headless checks, and 1.3 ms is affordable where 133 ms was not. It is also what
+// lets the checks sample a frame of the real thing rather than of some stand-in.
 //
 // Why everything GL happens on a thread of its own: the first version created the context on
 // WPF's UI thread, and the real window then never painted at all -- not just the canvas, the
 // whole window, toolbar included -- while the headless checks still passed. Owning a GL context
 // and a GLFW window on the thread running WPF's dispatcher is not worth diagnosing when it can
 // simply be kept away from it. The UI thread blocks for the millisecond or two a frame takes,
-// which is far less than the renderer it replaces.
+// which is far less than the renderer this replaced.
 public sealed class GpuHexRenderer : IDisposable
 {
     // Cells smaller than this cannot show their own shape, and the grid becomes a grey wash.
@@ -65,6 +66,7 @@ public sealed class GpuHexRenderer : IDisposable
     private float askZoom, askOffsetX, askOffsetY;
     private bool askGrid;
     private SKBitmap? answer;
+    private Exception? failure;
 
     private GpuHexRenderer()
     {
@@ -80,9 +82,9 @@ public sealed class GpuHexRenderer : IDisposable
     /// <remarks>
     /// There can only ever be one. GLFW binds to the thread that first creates a window in the
     /// process, and every renderer wants a thread of its own, so a second one fails with "Can
-    /// only create windows on the Glfw main thread" and silently drops the editor onto the CPU
-    /// path for the rest of the session. That is a sharp edge to leave lying about, so the single
-    /// instance is the public way in and the constructor is not. Call from the UI thread.
+    /// only create windows on the Glfw main thread" and takes the editor's only way of drawing
+    /// with it. That is a sharp edge to leave lying about, so the single instance is the public
+    /// way in and the constructor is not. Call from the UI thread.
     /// </remarks>
     public static GpuHexRenderer? Shared(Action<string>? log = null)
     {
@@ -153,32 +155,47 @@ public sealed class GpuHexRenderer : IDisposable
         {
             wanted.Wait();
             if (!running) break;
-            try { answer = RenderCore(); }
-            catch { answer = null; }
+            // Carried back rather than swallowed: whatever went wrong on this thread is the only account of
+            // it there is, and the caller has no second renderer to turn to.
+            try { answer = RenderCore(); failure = null; }
+            catch (Exception error) { answer = null; failure = error; }
             finished.Release();
         }
         Release();
     }
 
     /// <summary>
-    /// Renders the artwork at device scale and returns a bitmap the caller draws at 1:1, or null
-    /// when the GPU could not produce one. Cells outside the canvas come back transparent.
+    /// Renders the artwork at device scale and returns a bitmap the caller draws at 1:1. Cells outside the
+    /// canvas come back transparent.
     /// </summary>
-    public SKBitmap? Render(HexDocument document, ArtworkCache cache, int width, int height,
+    /// <remarks>
+    /// There is no other renderer, so a frame that cannot be produced throws instead of coming back empty.
+    /// Returning nothing would leave the editor showing a canvas with no artwork in it and no account of
+    /// why, which is a worse answer than stopping.
+    /// </remarks>
+    public SKBitmap Render(HexDocument document, ArtworkCache cache, int width, int height,
         float zoom, float offsetX, float offsetY, bool grid)
     {
-        if (width <= 0 || height <= 0 || !running) return null;
+        if (width <= 0 || height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(width), $"A frame of {width} by {height} has no pixels to draw.");
+        if (!running) throw new InvalidOperationException("The GPU renderer has stopped.");
         askDocument = document; askCache = cache;
         askWidth = width; askHeight = height;
         askZoom = zoom; askOffsetX = offsetX; askOffsetY = offsetY; askGrid = grid;
         wanted.Release();
-        // A frame is a millisecond or two. If one ever fails to come back, give up on the GPU
-        // rather than freezing the editor waiting for it.
-        if (!finished.Wait(TimeSpan.FromSeconds(2))) { running = false; return null; }
-        return answer;
+        // A frame is a millisecond or two. One that never comes back has left the GL thread somewhere this
+        // side cannot see into, so the renderer is finished rather than waited on again.
+        if (!finished.Wait(TimeSpan.FromSeconds(2)))
+        {
+            running = false;
+            throw new TimeoutException("A GPU frame did not come back within two seconds.");
+        }
+        if (failure != null)
+            throw new InvalidOperationException("The GPU renderer could not draw the canvas: " + failure.Message, failure);
+        return answer ?? throw new InvalidOperationException("The GPU renderer produced no frame.");
     }
 
-    private SKBitmap? RenderCore()
+    private SKBitmap RenderCore()
     {
         var document = askDocument!;
         var cache = askCache!;
@@ -191,8 +208,8 @@ public sealed class GpuHexRenderer : IDisposable
                 surface?.Dispose();
                 readback?.Dispose();
                 var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
-                surface = SKSurface.Create(context!, budgeted: true, info, sampleCount: 0, GRSurfaceOrigin.TopLeft);
-                if (surface == null) return null;
+                surface = SKSurface.Create(context!, budgeted: true, info, sampleCount: 0, GRSurfaceOrigin.TopLeft)
+                    ?? throw new InvalidOperationException($"Could not create a {width} by {height} GPU surface.");
                 readback = new SKBitmap(info);
                 surfaceWidth = width;
                 surfaceHeight = height;
@@ -237,7 +254,8 @@ public sealed class GpuHexRenderer : IDisposable
             surface.Canvas.Clear(SKColors.Transparent);
             surface.Canvas.DrawRect(new SKRect(0, 0, width, height), paint);
             context!.Flush();
-            if (!surface!.ReadPixels(readback!.Info, readback.GetPixels(), readback.RowBytes, 0, 0)) return null;
+            if (!surface!.ReadPixels(readback!.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
+                throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
             return readback;
         }
     }

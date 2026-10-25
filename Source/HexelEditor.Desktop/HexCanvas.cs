@@ -16,7 +16,6 @@ public sealed class HexCanvas : SKElement
     private EditorSession? session;
     private readonly ArtworkCache artwork = new();
     private GpuHexRenderer? gpu;
-    private bool gpuAttempted;
     private HexCoordinate? hover;
     private HexCoordinate? start;
     private HexCoordinate? previous;
@@ -32,9 +31,6 @@ public sealed class HexCanvas : SKElement
     public uint ForegroundColor { get; set; } = 0xFF000000;
     public int BrushRadius { get; set; }
     public bool ShowGrid { get; set; } = true;
-
-    /// <summary>True once the GPU renderer is running; false means the CPU fallback is in use.</summary>
-    public bool UsingGpu => gpu != null;
     public bool FilledShapes { get; set; }
     public bool SpacePressed { get; set; }
     public HexCoordinate? HoverCoordinate => hover;
@@ -116,35 +112,19 @@ public sealed class HexCanvas : SKElement
         // the thing being drawn.
         artwork.MarkDirty(session.TakeDirtyCells());
 
-        // The GL context is built on the first frame rather than in the constructor, so a machine
-        // without a usable GPU costs one failed attempt and then falls back quietly.
-        if (!gpuAttempted)
-        {
-            gpuAttempted = true;
-            // A way out without a rebuild, for a machine where the GPU path misbehaves.
-            if (Environment.GetEnvironmentVariable("HEXEL_DISABLE_GPU") != "1")
-                gpu = GpuHexRenderer.Shared(App.Log.Write);
-            else
-                App.Log.Write("GPU renderer disabled by HEXEL_DISABLE_GPU.");
-        }
+        // The shader is the only thing that draws artwork, and the application refuses to start without it,
+        // so there is nothing to fall back to here and no case where carrying on would show anything. The
+        // renderer is already built by the time the first frame arrives; this is only how the canvas reaches
+        // it, and it throws rather than leaving an empty canvas behind if it ever does not.
+        gpu ??= GpuHexRenderer.Shared(App.Log.Write)
+            ?? throw new InvalidOperationException("The canvas cannot draw: " + GpuHexRenderer.Unavailable);
 
         // The artwork is one shaded rectangle covering the window, drawn at device resolution so
         // it stays crisp on a scaled display, and blitted back at 1:1.
-        var rendered = gpu?.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
+        var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
             Zoom * dpi, offsetX * dpi, offsetY * dpi, ShowGrid);
-        if (rendered != null)
-        {
-            // 1:1, so nearest sampling is both exact and the cheapest path.
-            canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
-        }
-        else
-        {
-            canvas.Save();
-            canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
-            canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
-            ArtworkRenderer.Draw(canvas, session.Document, ShowGrid, Zoom, artwork);
-            canvas.Restore();
-        }
+        // 1:1, so nearest sampling is both exact and the cheapest path.
+        canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
 
         canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);

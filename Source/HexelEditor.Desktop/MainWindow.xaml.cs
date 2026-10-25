@@ -490,8 +490,7 @@ public partial class MainWindow : Window
     {
         var renderer = GpuHexRenderer.Shared(App.Log.Write)
             ?? throw new InvalidOperationException("There is no GPU renderer: " + GpuHexRenderer.Unavailable);
-        var frame = renderer.Render(document, cache, width, height, zoom, offsetX, offsetY, grid: false)
-            ?? throw new InvalidOperationException("The GPU renderer produced no frame.");
+        var frame = renderer.Render(document, cache, width, height, zoom, offsetX, offsetY, grid: false);
         return frame.Copy() ?? throw new InvalidOperationException("Could not copy the rendered frame.");
     }
 
