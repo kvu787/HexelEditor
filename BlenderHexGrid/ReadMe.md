@@ -57,8 +57,8 @@ Both scripts keep every setting in one block at the top.
 
 - **Flat-top hexagons**, matching HexelEditor's `HexOrientation.FlatTop`. Corners at 0, 60, 120,
   180, 240 and 300 degrees, so each cell has a flat edge top and bottom and a point left and right.
-- **Four triangles per cell**, fanned from corner 0, the same decomposition
-  `ArtworkRenderer.MeshFan` uses.
+- **Four triangles per cell**, fanned from corner 0. The editor used the same decomposition while it
+  drew its cells as a mesh; it draws them with a shader now, so this is the Blender script's own.
 - **Flat on the XY plane at Z = 0**, occupying the **+X +Y quadrant only**. The bounding box starts
   exactly at the origin, so cell (0, 0) is the bottom-left one and nothing has a negative coordinate.
 - **Unlit materials**, an emission shader each, with the viewport display colour set to match so
