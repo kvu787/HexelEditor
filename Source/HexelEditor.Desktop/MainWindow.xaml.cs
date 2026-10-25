@@ -886,6 +886,16 @@ public partial class MainWindow : Window
             content.Measure(new Size(560, 1000));
             if (content.DesiredSize.Width < 200 || content.DesiredSize.Height < 200) throw new InvalidOperationException($"The {name} dialog did not lay out.");
         }
+
+        // Every box has to hold the longest value its own label offers. These drifted apart once:
+        // the label read "Columns (1-2048)" while the box stopped accepting input after three
+        // characters, so the largest canvas the editor supports could not be typed in. Nothing
+        // about that is visible until someone tries it, which is why it is checked here.
+        var digits = HexDocument.MaximumDimension.ToString().Length;
+        foreach (var box in ((Panel)dialogs[1].Content).Children.OfType<TextBox>())
+            if (box.MaxLength > 0 && box.MaxLength < digits)
+                throw new InvalidOperationException(
+                    $"A New canvas field accepts {box.MaxLength} characters, too few for {HexDocument.MaximumDimension}.");
     }
 
     public void VerifyCanvasRendered()

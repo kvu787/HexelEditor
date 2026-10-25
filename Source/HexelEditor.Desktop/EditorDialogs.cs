@@ -90,8 +90,11 @@ public static class EditorDialogs
 
 public sealed class NewCanvasDialog : Window
 {
-    private readonly TextBox widthInput = new() { Text = "40", MaxLength = 3 };
-    private readonly TextBox heightInput = new() { Text = "32", MaxLength = 3 };
+    // Taken from the limit rather than written out, so the box can always hold the largest value
+    // the label offers. These disagreed before: the label said 1-2048 and the box took three digits.
+    private static readonly int DimensionDigits = HexDocument.MaximumDimension.ToString().Length;
+    private readonly TextBox widthInput = new() { Text = "40", MaxLength = DimensionDigits };
+    private readonly TextBox heightInput = new() { Text = "32", MaxLength = DimensionDigits };
     private readonly TextBox nameInput = new() { Text = "Untitled", MaxLength = 120 };
     private readonly RadioButton pointy = new() { Content = "Pointy top", IsChecked = true, GroupName = "Orientation" };
     public int CanvasWidth { get; private set; } = 40;
@@ -122,7 +125,7 @@ public sealed class NewCanvasDialog : Window
             if (!int.TryParse(widthInput.Text, out var width) || !int.TryParse(heightInput.Text, out var height) ||
                 width is < 1 or > HexDocument.MaximumDimension || height is < 1 or > HexDocument.MaximumDimension)
             { MessageBox.Show(this, $"Enter dimensions between 1 and {HexDocument.MaximumDimension} hexels.", "Canvas size"); return; }
-        if ((long)width * height > HexDocument.MaximumCellCount)
+            if ((long)width * height > HexDocument.MaximumCellCount)
             { MessageBox.Show(this, $"A canvas holds at most {HexDocument.MaximumCellCount:N0} hexels, and {width} by {height} is {(long)width * height:N0}.", "Canvas size"); return; }
             CanvasWidth = width; CanvasHeight = height; DialogResult = true;
         };
