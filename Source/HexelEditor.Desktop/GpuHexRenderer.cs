@@ -40,6 +40,10 @@ public sealed class GpuHexRenderer : IDisposable
     // Cells smaller than this cannot show their own shape, and the grid becomes a grey wash.
     private const float GridAbovePixels = 4f;
     private const float GridLinePixels = 0.9f;
+    // What the selection used to be drawn with on the processor: a fill at 40 of 255 and a 1.4 pixel
+    // outline, both in the interface's blue.
+    private const float SelectionFillAlpha = 40f / 255f;
+    private const float SelectionLinePixels = 1.4f;
 
     private readonly Thread thread;
     // Which device the context landed on is worth having in the log. A machine with both an integrated and
@@ -60,9 +64,18 @@ public sealed class GpuHexRenderer : IDisposable
     private SKSurface? surface;
     private int surfaceWidth, surfaceHeight;
     private SKBitmap? readback;
-    private SKImage? colours;
+    private MirroredTexture? colours;
     private ArtworkCache? colourSource;
     private int colourVersion = -1;
+    // The image reading the colour texture. It survives the texture being written to, so it is kept
+    // rather than remade, and only a reallocation replaces it.
+    private SKImage? colourImage;
+    private SKImage? selected;
+    private SelectionMask? selectedSource;
+    private int selectedVersion = -1;
+    // Bound when nothing is selected. A runtime effect's child shader has to be bound whether the frame
+    // reads from it or not, and one texel is the cheapest thing to bind.
+    private SKImage? noSelection;
 
     /// <summary>
     /// What one frame spent, in milliseconds, split into the parts that behave differently: recompositing the
@@ -90,6 +103,8 @@ public sealed class GpuHexRenderer : IDisposable
     // that is ever needed, and the two semaphores are all the synchronisation there has to be.
     private HexDocument? askDocument;
     private ArtworkCache? askCache;
+    private SelectionMask? askSelection;
+    private RectanglePreview? askPreview;
     private int askWidth, askHeight;
     private float askZoom, askOffsetX, askOffsetY;
     private bool askGrid;
@@ -203,12 +218,14 @@ public sealed class GpuHexRenderer : IDisposable
     /// why, which is a worse answer than stopping.
     /// </remarks>
     public SKBitmap Render(HexDocument document, ArtworkCache cache, int width, int height,
-        float zoom, float offsetX, float offsetY, bool grid)
+        float zoom, float offsetX, float offsetY, bool grid,
+        SelectionMask? selection = null, RectanglePreview? preview = null)
     {
         if (width <= 0 || height <= 0)
             throw new ArgumentOutOfRangeException(nameof(width), $"A frame of {width} by {height} has no pixels to draw.");
         if (!running) throw new InvalidOperationException("The GPU renderer has stopped.");
         askDocument = document; askCache = cache;
+        askSelection = selection; askPreview = preview;
         askWidth = width; askHeight = height;
         askZoom = zoom; askOffsetX = offsetX; askOffsetY = offsetY; askGrid = grid;
         wanted.Release();
@@ -228,6 +245,8 @@ public sealed class GpuHexRenderer : IDisposable
     {
         var document = askDocument!;
         var cache = askCache!;
+        var selection = askSelection;
+        var preview = askPreview;
         int width = askWidth, height = askHeight;
         float zoom = askZoom, offsetX = askOffsetX, offsetY = askOffsetY;
         var grid = askGrid;
@@ -258,19 +277,43 @@ public sealed class GpuHexRenderer : IDisposable
         // A version counts the changes within one cache, so it says nothing across two of them: a second
         // cache reaching a version this one has already seen would leave the first cache's texture in
         // place. Which cache the texture came from is therefore part of whether it is still current.
-        if (colours == null || colourVersion != cache.Version || !ReferenceEquals(colourSource, cache))
+        colours ??= new MirroredTexture();
+        // Which part of the texture to send. A cache this frame has not seen before has to go up whole,
+        // because nothing is known about what in it differs from the texture; after that, only the texels
+        // the compositing step actually wrote.
+        if (!ReferenceEquals(colourSource, cache))
         {
-            colours?.Dispose();
-            colours = SKImage.FromBitmap(raster);
+            colourImage = colours.Update(context!, raster, null);
             colourSource = cache;
             colourVersion = cache.Version;
+        }
+        else if (colourVersion != cache.Version)
+        {
+            colourImage = colours.Update(context!, raster, cache.LastWritten);
+            colourVersion = cache.Version;
+        }
+        colourImage ??= colours.Update(context!, raster, null);
+        noSelection ??= OneTexel();
+        var selectionRaster = selection?.Current;
+        if (selectionRaster != null
+            && (selected == null || selectedVersion != selection!.Version || !ReferenceEquals(selectedSource, selection)))
+        {
+            selected?.Dispose();
+            selected = SKImage.FromBitmap(selectionRaster);
+            selectedSource = selection;
+            selectedVersion = selection!.Version;
         }
         var afterUpload = measuring ? Stopwatch.GetTimestamp() : 0;
 
         var cellPixels = (float)(Math.Sqrt(3) * CanvasGeometry.CellRadius * zoom);
         var pointyTop = document.Orientation == HexOrientation.PointyTop;
-        using var child = colours.ToShader(SKShaderTileMode.Decal, SKShaderTileMode.Decal,
+        using var child = colourImage.ToShader(SKShaderTileMode.Decal, SKShaderTileMode.Decal,
             new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
+        var showSelection = selection is { Any: true } && selected != null;
+        using var selectionChild = (showSelection ? selected! : noSelection!).ToShader(
+            SKShaderTileMode.Decal, SKShaderTileMode.Decal,
+            new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
+        var shownPreview = preview is { IsEmpty: false } ? preview.Value : RectanglePreview.Nothing;
         using var uniforms = new SKRuntimeEffectUniforms(effect!)
         {
             { "invScale", new[] { 1f / zoom, 1f / zoom } },
@@ -283,8 +326,19 @@ public sealed class GpuHexRenderer : IDisposable
             // would only be a grey wash, so it stops there as the old renderer did.
             { "gridStrength", grid && cellPixels >= GridAbovePixels ? 0.23f : 0f },
             { "gridWidth", GridLinePixels / zoom },
+            // The same fill and outline the per-cell paths used to draw, and the same outline width, so
+            // that moving this into the shader is a change of cost rather than of appearance.
+            { "selectStrength", showSelection ? SelectionFillAlpha : 0f },
+            { "selectWidth", SelectionLinePixels / zoom },
+            { "previewStrength", shownPreview.IsEmpty ? 0f : SelectionFillAlpha },
+            { "previewBounds", new[] { (float)shownPreview.Left, shownPreview.Top, shownPreview.Right, (float)shownPreview.Bottom } },
+            { "previewFilled", shownPreview.Filled ? 1f : 0f },
         };
-        using var children = new SKRuntimeEffectChildren(effect!) { { "colours", child } };
+        using var children = new SKRuntimeEffectChildren(effect!)
+        {
+            { "colours", child },
+            { "selection", selectionChild },
+        };
         using var shader = effect!.ToShader(uniforms, children);
         using var paint = new SKPaint { Shader = shader };
 
@@ -309,10 +363,22 @@ public sealed class GpuHexRenderer : IDisposable
         return readback;
     }
 
+    private static SKImage OneTexel()
+    {
+        using var bitmap = new SKBitmap(new SKImageInfo(1, 1, SKColorType.Gray8, SKAlphaType.Opaque));
+        bitmap.SetPixel(0, 0, SKColors.Black);
+        return SKImage.FromBitmap(bitmap) ?? throw new InvalidOperationException("Could not create the empty selection texture.");
+    }
+
     private void Release()
     {
         colours?.Dispose();
+        colours = null;
+        colourImage = null;
         colourSource = null;
+        selected?.Dispose();
+        selectedSource = null;
+        noSelection?.Dispose();
         readback?.Dispose();
         surface?.Dispose();
         effect?.Dispose();
@@ -334,6 +400,7 @@ public sealed class GpuHexRenderer : IDisposable
     // a frame takes the same side of it.
     private const string Sksl = """
 uniform shader colours;
+uniform shader selection;
 uniform float2 invScale;
 uniform float2 pan;
 uniform float2 grid;
@@ -341,9 +408,16 @@ uniform float  radius;
 uniform float  pointy;
 uniform float  gridStrength;
 uniform float  gridWidth;
+uniform float  selectStrength;
+uniform float  selectWidth;
+uniform float  previewStrength;
+uniform float4 previewBounds;
+uniform float  previewFilled;
 
 const float SQRT3 = 1.7320508;
 const float HALF_SQRT3 = 0.8660254;
+// The interface's blue, which the selection is filled and outlined with.
+const half3 SELECTION = half3(0.0, 0.372549, 0.721569);
 
 // Cube rounding: the nearest hex to a fractional axial coordinate. The three cube coordinates sum
 // to zero, so the one that moved furthest is recomputed from the other two.
@@ -375,18 +449,40 @@ half4 sampleOne(float2 w) {
         : float2(column + 0.5, row * 2.0 + (q - 2.0 * floor(q * 0.5)) + 0.5);
     half4 colour = colours.eval(texel);
 
+    // Distance from the cell's centre out to its nearest edge. A hexagon is the points whose projection
+    // onto all three edge normals stays inside the apothem, so the smallest slack across those three is
+    // the distance to the boundary. Both the grid and a selected cell's outline are drawn from it.
+    float2 centre = pointy > 0.5
+        ? radius * float2(SQRT3 * (q + r * 0.5), 1.5 * r)
+        : radius * float2(1.5 * q, SQRT3 * (r + q * 0.5));
+    float2 p = w - centre;
+    if (pointy < 0.5) { p = float2(p.y, p.x); }
+    float reach = max(abs(p.x), max(abs(0.5 * p.x + HALF_SQRT3 * p.y), abs(-0.5 * p.x + HALF_SQRT3 * p.y)));
+    float apothem = radius * HALF_SQRT3;
+
     if (gridStrength > 0.0) {
-        // Distance from the cell's centre out to its nearest edge. A hexagon is the points whose
-        // projection onto all three edge normals stays inside the apothem, so the smallest slack
-        // across those three is the distance to the boundary.
-        float2 centre = pointy > 0.5
-            ? radius * float2(SQRT3 * (q + r * 0.5), 1.5 * r)
-            : radius * float2(1.5 * q, SQRT3 * (r + q * 0.5));
-        float2 p = w - centre;
-        if (pointy < 0.5) { p = float2(p.y, p.x); }
-        float reach = max(abs(p.x), max(abs(0.5 * p.x + HALF_SQRT3 * p.y), abs(-0.5 * p.x + HALF_SQRT3 * p.y)));
-        float edge = 1.0 - step(radius * HALF_SQRT3 - gridWidth, reach);
+        float edge = 1.0 - step(apothem - gridWidth, reach);
         colour = mix(half4(half3(0.0), colour.a), colour, half(edge));
+    }
+
+    // Selected, or inside the rectangle being dragged out: filled with the interface's blue and outlined
+    // in it, which is what the per-cell paths drew before this moved into the shader.
+    float marked = 0.0;
+    if (selectStrength > 0.0 && selection.eval(float2(column + 0.5, row + 0.5)).r > 0.5) {
+        marked = selectStrength;
+    }
+    if (previewStrength > 0.0
+        && column >= previewBounds.x && column <= previewBounds.z
+        && row >= previewBounds.y && row <= previewBounds.w
+        && (previewFilled > 0.5
+            || column == previewBounds.x || column == previewBounds.z
+            || row == previewBounds.y || row == previewBounds.w)) {
+        marked = previewStrength;
+    }
+    if (marked > 0.0) {
+        half4 tinted = mix(colour, half4(SELECTION, colour.a), half(marked));
+        float edge = 1.0 - step(apothem - selectWidth, reach);
+        colour = mix(half4(SELECTION, colour.a), tinted, half(edge));
     }
     return colour;
 }

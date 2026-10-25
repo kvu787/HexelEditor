@@ -16,6 +16,7 @@ public sealed class HexCanvas : SKElement
     private const float MaximumZoom = 30f;
     private EditorSession? session;
     private readonly ArtworkCache artwork = new();
+    private readonly SelectionMask selectionMask = new();
     private GpuHexRenderer? gpu;
     private HexCoordinate? hover;
     private HexCoordinate? start;
@@ -81,7 +82,7 @@ public sealed class HexCanvas : SKElement
         // The raster holds its pixels in a pinned array, so it is worth releasing deliberately
         // rather than leaving to the finalizer. ShutdownStarted fires once, unlike Unloaded,
         // which also fires when a control is merely reparented.
-        Dispatcher.ShutdownStarted += (_, _) => artwork.Dispose();
+        Dispatcher.ShutdownStarted += (_, _) => { artwork.Dispose(); selectionMask.Dispose(); };
         Cursor = Cursors.Cross;
     }
 
@@ -177,10 +178,15 @@ public sealed class HexCanvas : SKElement
         gpu ??= GpuHexRenderer.Shared(App.Log.Write)
             ?? throw new InvalidOperationException("The canvas cannot draw: " + GpuHexRenderer.Unavailable);
 
+        // The selection and the rectangle being dragged out are drawn by the same shader as the artwork,
+        // from a mask of their own. Both cover areas rather than outlines, and an area on this canvas can be
+        // two million cells, which is more than any per-cell drawing can keep up with.
+        selectionMask.Refresh(session.Document, session.Selection);
+
         // The artwork is one shaded rectangle covering the window, drawn at device resolution so
         // it stays crisp on a scaled display, and blitted back at 1:1.
         var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
-            Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid);
+            Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid, selectionMask, RectangleBeingDragged());
         var afterArtwork = measuring ? Stopwatch.GetTimestamp() : 0;
         // 1:1, so nearest sampling is both exact and the cheapest path.
         canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
@@ -205,30 +211,15 @@ public sealed class HexCanvas : SKElement
             if (cursor) canvas.DrawPath(path, halo);
             canvas.DrawPath(path, outline); canvas.Restore();
         }
-        var (minColumn, minRow, maxColumn, maxRow) = CanvasGeometry.VisibleCells(session.Document, visible);
+        var lineCells = 0L;
+        // A line is bounded by the cells it crosses, which is at most a canvas diagonal, so it stays here
+        // rather than going into the shader with the areas.
+        if (drawing && start.HasValue && hover.HasValue && Tool == DrawingTool.Line)
+            foreach (var cell in start.Value.LineTo(hover.Value)) { Highlight(cell, true); lineCells++; }
         if (measuring)
         {
             LastVisibleBounds = visible;
-            LastOverlayCells = session.Selection.Count > 0 ? (long)(maxRow - minRow + 1) * (maxColumn - minColumn + 1) : 0;
-        }
-        if (session.Selection.Count > 0)
-            for (var row = minRow; row <= maxRow; row++)
-                for (var column = minColumn; column <= maxColumn; column++)
-                {
-                    var index = row * session.Document.Width + column;
-                    if (session.Selection.Contains(index)) Highlight(session.Document.CoordinateAt(index), true);
-                }
-        if (drawing && start.HasValue && hover.HasValue && Tool == DrawingTool.Line)
-            foreach (var cell in start.Value.LineTo(hover.Value)) Highlight(cell, true);
-        if (drawing && start.HasValue && hover.HasValue && Tool == DrawingTool.Rectangle)
-        {
-            var (columnA, rowA) = HexGeometry.ToOffset(start.Value, session.Document.Orientation);
-            var (columnB, rowB) = HexGeometry.ToOffset(hover.Value, session.Document.Orientation);
-            var left = Math.Max(minColumn, Math.Min(columnA, columnB)); var right = Math.Min(maxColumn, Math.Max(columnA, columnB));
-            var top = Math.Max(minRow, Math.Min(rowA, rowB)); var bottom = Math.Min(maxRow, Math.Max(rowA, rowB));
-            for (var row = top; row <= bottom; row++)
-                for (var column = left; column <= right; column++)
-                    if (FilledShapes || row == top || row == bottom || column == left || column == right) Highlight(HexGeometry.FromOffset(column, row, session.Document.Orientation), true);
+            LastOverlayCells = lineCells;
         }
         if (hover.HasValue && !panning)
         {
@@ -241,6 +232,19 @@ public sealed class HexCanvas : SKElement
                 Milliseconds(afterBackdrop, afterArtwork),
                 Milliseconds(afterArtwork, afterBlit),
                 Milliseconds(afterBlit, Stopwatch.GetTimestamp()));
+    }
+
+    // The rectangle a drag is sketching out, for the shader to fill. Unclamped: the shader rejects cells
+    // outside the canvas anyway, and clamping it to what is on screen was only ever there to keep the
+    // per-cell loop down.
+    private RectanglePreview? RectangleBeingDragged()
+    {
+        if (!drawing || Tool != DrawingTool.Rectangle || !start.HasValue || !hover.HasValue || session == null) return null;
+        var (columnA, rowA) = HexGeometry.ToOffset(start.Value, session.Document.Orientation);
+        var (columnB, rowB) = HexGeometry.ToOffset(hover.Value, session.Document.Orientation);
+        return new RectanglePreview(
+            Math.Min(columnA, columnB), Math.Min(rowA, rowB),
+            Math.Max(columnA, columnB), Math.Max(rowA, rowB), FilledShapes);
     }
 
     private void PointerDown(object sender, MouseButtonEventArgs args)
