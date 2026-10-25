@@ -23,9 +23,6 @@
         <Path DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,14,0" Width="18" Height="19"
               Stretch="Uniform" Fill="{StaticResource Muted}"
               Data="M 14,0 L 27,7 L 27,22 L 14,29 L 1,22 L 1,7 Z M 14,7 L 20,11 L 20,18 L 14,22 L 8,18 L 8,11 Z" />
-        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Content="Save" Click="SaveClicked" Style="{StaticResource AccentButton}" />
-        </StackPanel>
         <Menu VerticalAlignment="Center">
           <MenuItem x:Name="FileMenu" Header="_File">
             <MenuItem Header="New canvas..." InputGestureText="Ctrl+N" Click="NewProjectClicked" />
