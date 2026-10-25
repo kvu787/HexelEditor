@@ -17,31 +17,31 @@ about 8.4 ms before it misses one.
 
 ## The ten hotspots, worst first
 
-| #  | Hotspot                                           | Cost                                      | Where it is                                   |
-| -- | ------------------------------------------------- | ----------------------------------------- | --------------------------------------------- |
-| 1  | Selection highlights, one path per cell           | **2637 ms a frame** with everything selected | `HexCanvas.Paint`, the selection loop      |
-| 2  | Colour texture re-uploaded whole on any cell edit | **9.2 ms a frame** while painting         | `GpuHexRenderer.RenderCore`, `SKImage.FromBitmap` |
-| 3  | Copying the frame onto the canvas surface         | 4.4 ms, **14.7 ms** at 4K                 | `HexCanvas.Paint`, `canvas.DrawBitmap`        |
-| 4  | Reading the frame back from the GPU               | 1.14 ms, **3.70 ms** at 4K                | `GpuHexRenderer.RenderCore`, `ReadPixels`     |
-| 5  | Saving and loading a project                      | **478 ms** and **272 ms**                 | `ProjectFile`, one `uint` at a time           |
-| 6  | The dotted backdrop                               | 3.0 ms, **5.3 ms** at 4K                  | `HexCanvas.Paint`, 4000 antialiased circles   |
-| 7  | Whole-canvas editing operations                   | flood fill **160 ms**, move 123 ms, rotate 91 ms, clear 59 ms, copy 29 ms | `EditorSession`         |
-| 8  | Recompositing every cell after a structural change | 11 ms, and it forces hotspot 2           | `ArtworkCache.Composite`                      |
-| 9  | The selection as a `HashSet<int>`                 | 4.1 ms to select all, 3.7 ms per mouse move while dragging a large selection | `EditorSession.Selection` |
-| 10 | Rebuilding the palette's 256 swatches             | 2.1 ms, on every colour pick and every structural change | `MainWindow.RefreshPalette`    |
+| #  | Hotspot                                            | Cost                                                                         | Where it is                                       |
+| -- | -------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------- |
+| 1  | Selection highlights, one path per cell            | **2637 ms a frame** with everything selected                                 | `HexCanvas.Paint`, the selection loop             |
+| 2  | Colour texture re-uploaded whole on any cell edit  | **9.2 ms a frame** while painting                                            | `GpuHexRenderer.RenderCore`, `SKImage.FromBitmap` |
+| 3  | Copying the frame onto the canvas surface          | 4.4 ms, **14.7 ms** at 4K                                                    | `HexCanvas.Paint`, `canvas.DrawBitmap`            |
+| 4  | Reading the frame back from the GPU                | 1.14 ms, **3.70 ms** at 4K                                                   | `GpuHexRenderer.RenderCore`, `ReadPixels`         |
+| 5  | Saving and loading a project                       | **478 ms** and **272 ms**                                                    | `ProjectFile`, one `uint` at a time               |
+| 6  | The dotted backdrop                                | 3.0 ms, **5.3 ms** at 4K                                                     | `HexCanvas.Paint`, 4000 antialiased circles       |
+| 7  | Whole-canvas editing operations                    | flood fill **160 ms**, move 123 ms, rotate 91 ms, clear 59 ms, copy 29 ms    | `EditorSession`                                   |
+| 8  | Recompositing every cell after a structural change | 11 ms, and it forces hotspot 2                                               | `ArtworkCache.Composite`                          |
+| 9  | The selection as a `HashSet<int>`                  | 4.1 ms to select all, 3.7 ms per mouse move while dragging a large selection | `EditorSession.Selection`                         |
+| 10 | Rebuilding the palette's 256 swatches              | 2.1 ms, on every colour pick and every structural change                     | `MainWindow.RefreshPalette`                       |
 
 ## What a person actually waits for
 
 End to end, on a 2000 x 1000 canvas zoomed to fit, in a 2110 x 1292 canvas area. The operation and the
 frame that follows it are separate because they are fixed in different places.
 
-| Interaction                  | The operation | The frame | Both       |
-| ---------------------------- | ------------: | --------: | ---------: |
-| Paint one cell               |         0.10  |     18.37 | **18.45**  |
-| Drag the brush over 60 cells |         0.19  |     18.13 | **18.33**  |
-| Pan the canvas               |         0.02  |      8.29 |  **8.31**  |
-| Hide or show a layer         |         2.21  |     27.15 | **29.79**  |
-| Undo a whole-canvas change   |         2.24  |     27.29 | **29.53**  |
+| Interaction                  | The operation | The frame |      Both |
+| ---------------------------- | ------------: | --------: | --------: |
+| Paint one cell               |          0.10 |     18.37 | **18.45** |
+| Drag the brush over 60 cells |          0.19 |     18.13 | **18.33** |
+| Pan the canvas               |          0.02 |      8.29 |  **8.31** |
+| Hide or show a layer         |          2.21 |     27.15 | **29.79** |
+| Undo a whole-canvas change   |          2.24 |     27.29 | **29.53** |
 
 At 4K the same frames cost 32.99 ms while painting and 24.60 ms while panning. So the editor draws at
 roughly 30 to 55 frames a second while being drawn on, against a display that offers 119, and every one of
@@ -209,18 +209,18 @@ and updating their brush and tag satisfies all of it.
 
 Worth recording so they are not chased later.
 
-| Thing                                        | Cost      |
-| -------------------------------------------- | --------- |
-| Compositing one cell, or a 17-cell dab       | 0.000 to 0.006 ms |
-| `EditorSession.Paint` for one cell           | 0.001 ms  |
-| A 60-cell brush drag, with every notification it sends | 0.19 ms |
-| `UpdateHeader`                               | 0.001 ms  |
-| `CloneStructure`, which shares cells         | 0.000 ms  |
-| Creating a 2000 x 1000 document              | 0.55 ms   |
-| Copying one with its cells                   | 0.72 ms   |
-| Rebuilding the layer list, 12 layers         | 0.27 ms   |
-| Building the whole window, every control     | 8.5 ms    |
-| Startup, process start to the first measurement | 1.0 to 1.4 s, of which the GPU renderer takes about 0.65 s |
+| Thing                                                  | Cost                                                       |
+| ------------------------------------------------------ | ---------------------------------------------------------- |
+| Compositing one cell, or a 17-cell dab                 | 0.000 to 0.006 ms                                          |
+| `EditorSession.Paint` for one cell                     | 0.001 ms                                                   |
+| A 60-cell brush drag, with every notification it sends | 0.19 ms                                                    |
+| `UpdateHeader`                                         | 0.001 ms                                                   |
+| `CloneStructure`, which shares cells                   | 0.000 ms                                                   |
+| Creating a 2000 x 1000 document                        | 0.55 ms                                                    |
+| Copying one with its cells                             | 0.72 ms                                                    |
+| Rebuilding the layer list, 12 layers                   | 0.27 ms                                                    |
+| Building the whole window, every control               | 8.5 ms                                                     |
+| Startup, process start to the first measurement        | 1.0 to 1.4 s, of which the GPU renderer takes about 0.65 s |
 
 The per-cell notification chain was a suspect and is not guilty: a drag that crosses 60 cells sends 60
 notifications, rebuilds the header 60 times, and costs 0.19 ms in total.
