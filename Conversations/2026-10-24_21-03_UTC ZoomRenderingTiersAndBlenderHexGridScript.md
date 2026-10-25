@@ -1527,3 +1527,98 @@ It isn't free. You swap:
 You are trading work proportional to **cell count** for work proportional to **screen size**.
 
 That's the whole argument, because your screen is 2560x1440 and always will be, while your canvas can be 2 million cells or 200 million. One of those numbers is bounded and the other isn't.
+
+## User
+
+okay, this approach sounds fine.
+
+do this task: change hexel editor so that it looks visually like the blender experiment we did at all zoom levels, and runs performantly.
+
+the approach you described sounds good, but if you need to make adjustments feel free to do so. your task is to achieve the described task as best as possible, not to stick rigidly to any specific rigid predefined implementation plan.
+
+also, implement a check box toggle to turn anti-aliasing on/off.
+
+## Assistant
+
+Done, validated, and committed in `ea5cb45` and `bee77bb`. The approach survived mostly intact, but
+two measurements changed it and I broke the machine's rules once on the way.
+
+### What was measured first
+
+An SkSL runtime shader on Skia's **CPU** backend: 105 ms a frame, flat at every zoom. Constant, as
+predicted, and far too slow. That ruled out keeping everything on the CPU and settled that the GPU
+was genuinely required rather than merely nicer.
+
+An offscreen GL context in a hidden window, which the whole plan depended on: works. Draw 0.04 ms,
+draw plus reading the pixels back 1.3 ms.
+
+That second number decided the architecture. `SKElement` hands WPF a bitmap, and the verification
+harness captures the window with `RenderTargetBitmap`, which cannot see GPU content at all -- a
+`GLWpfControl` would have come back blank and taken the whole validation discipline with it.
+Reading the pixels back into a bitmap keeps one rendering path for the real window and for the
+headless checks, and 1.3 ms is affordable where 133 ms was not.
+
+### What was built
+
+`GpuHexRenderer` draws one rectangle over the window with a shader that runs
+`HexGeometry.FromPoint` per pixel and looks the colour up. The colour texture is `ArtworkCache`'s
+existing raster, which already holds composited colour at two texels a cell; it gained a `Version`
+counter so the texture is only re-uploaded when a cell actually changed. The grid is computed from
+the distance to the nearest cell edge, exact at any zoom. Antialiasing is a rotated-grid four tap
+supersample, because MSAA cannot help when there is one triangle and every cell boundary is
+procedural.
+
+`ArtworkRenderer` stays as the fallback, reached automatically when no context can be created and
+on demand with `HEXEL_DISABLE_GPU=1`.
+
+### Measured after, grid on, 2000 x 1000 canvas at 2456 x 1270
+
+| Zoom | Cell px | GPU     | CPU tiered |
+| ---: | ------: | ------: | ---------: |
+| 2.00 |    41.6 | 5.78 ms |    17.2 ms |
+| 1.00 |    20.8 | 3.96 ms |    42.3 ms |
+| 0.75 |    15.6 | 4.64 ms |    64.2 ms |
+| 0.65 |    13.5 | 3.93 ms |    48.3 ms |
+| 0.40 |     8.3 | 4.10 ms |    91.2 ms |
+| 0.25 |     5.2 | 5.54 ms |    70.6 ms |
+| 0.15 |     3.1 | 4.00 ms |   151.9 ms |
+| 0.08 |     1.7 | 5.18 ms |    29.3 ms |
+
+Flat 4 to 6 ms everywhere, inside a 60 fps budget at every zoom. Hexagons are hexagons at 25%,
+where the band tier used to draw rectangles, and smooth at 65%, where the mesh tier had no
+antialiasing. With the toggle off the edges are hard and stair-stepped, as intended.
+
+### Three failures on the way, one of them mine against the rules
+
+**A message box reached the primary display.** `IsChecked="True"` on the new checkbox raises
+`Checked` while `InitializeComponent` is still running, before `EditorCanvas` exists. The
+`NullReferenceException` surfaced as a WPF error dialog on a user display, which is exactly what
+the validation rules forbid. Fixed by setting the initial state from the constructor and guarding
+the handler.
+
+**The window painted nothing at all.** With the GL context created on WPF's UI thread the real
+window came back blank -- not the canvas, the whole window including the toolbar -- while the
+headless checks kept passing. Moved all GL work onto a thread of its own.
+
+**A fix that was not a fix.** Suspecting WPF's Direct3D compositing, I set
+`RenderOptions.ProcessRenderMode = SoftwareOnly`. Still blank. Disabling the GPU renderer entirely
+was *also* still blank, which proved the GPU was never the cause of that particular failure:
+software compositing breaks `PrintWindow`, which is how the display pass captures. Reverted, and
+everything passed.
+
+Worth recording that the second and third overlapped, so the thread move was never cleanly
+isolated. It is the right design regardless, and three consecutive validation runs pass with it.
+
+### Validation
+
+`pwsh -File ./Scripts/Validate.ps1`, three consecutive clean runs:
+
+```
+[  ok  ] Build, tests and hidden-host verification
+[  ok  ] Display pass on NE18NZ2 - 3840 x 2400, 170 distinct colors
+[  ok  ] Did not disturb the machine - none on a user display and none taking focus
+```
+
+170 distinct colours against 123 on the CPU path, which is the antialiasing showing up in the
+capture. The session log confirms "GPU renderer ready" in both the hidden host and the real window,
+so the path being validated is the real one.
