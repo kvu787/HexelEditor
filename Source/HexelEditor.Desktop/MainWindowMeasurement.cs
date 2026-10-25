@@ -387,14 +387,27 @@ public partial class MainWindow
                 interacting.EndStroke();
             });
             Interaction("Pan the canvas", 10, () => EditorCanvas.ChangeZoom(1f));
+            // Undoing one dab used to be reported as a change to everything, which rebuilt and re-uploaded
+            // the whole raster for a change to one cell.
+            Interaction("Undo one brush stroke", 10, interacting.Undo, () =>
+            {
+                interacting.Paint(HexGeometry.FromOffset(Random.Shared.Next(2000), Random.Shared.Next(1000), document.Orientation), 0xFF2FC866);
+                interacting.EndStroke();
+                Frame();
+            });
+            // A structural change that alters nothing about how the cells look, which once cost the same
+            // whole-canvas rebuild as hiding a layer.
+            var renamed = 0;
+            Interaction("Rename a layer", 10, () => interacting.SetLayerName($"Renamed {renamed++}"));
             Interaction("Hide or show a layer", 6, () => interacting.SetLayerVisible(0, !document.Layers[0].Visible));
-            // A flood fill rather than a painted fill: both change every cell and leave one undo entry, but
-            // the fill goes through the session one cell at a time, and on a session the window is listening
-            // to that is two million notifications nothing in the editor would ever send.
-            var shade = 0u;
+            // Clearing the layer rather than flood filling it. The large document's cells differ from their
+            // neighbours, so a flood fill from a corner reaches one cell, and the earlier figure under this
+            // name was an undo of one cell dressed up as a whole canvas. A clear with nothing selected writes
+            // every cell on the layer and leaves one undo entry of two million edits, which is what undoing a
+            // change to the whole canvas costs: every cell recomposited and the whole raster uploaded.
             Interaction("Undo a whole-canvas change", 3, interacting.Undo, () =>
             {
-                interacting.FloodFill(document.CoordinateAt(0), 0xFF000000 | (shade += 0x010305));
+                interacting.ClearPixels();
                 Frame();
             });
         }

@@ -37,6 +37,68 @@ public sealed class EditorTests
         for (var index = 1; index < line.Length; index++) Assert.Equal(1, line[index - 1].DistanceTo(line[index]));
     }
 
+    [Theory]
+    [InlineData(HexOrientation.PointyTop)]
+    [InlineData(HexOrientation.FlatTop)]
+    public void OffsetNeighborsAreTheSixAxialNeighborsOnEveryLine(HexOrientation orientation)
+    {
+        // Both parities of both axes, well inside a canvas so that no neighbour falls off it.
+        for (var column = 4; column < 8; column++)
+            for (var row = 4; row < 8; row++)
+            {
+                var cell = HexGeometry.FromOffset(column, row, orientation);
+                var expected = HexCoordinate.Directions.Select(direction => HexGeometry.ToOffset(cell + direction, orientation)).Order().ToArray();
+                var line = orientation == HexOrientation.PointyTop ? row : column;
+                var actual = new List<(int, int)>();
+                foreach (var (deltaColumn, deltaRow) in HexGeometry.NeighborOffsets(orientation, line)) actual.Add((column + deltaColumn, row + deltaRow));
+                Assert.Equal(expected, actual.Order().ToArray());
+            }
+    }
+
+    [Fact]
+    public void UndoingABrushStrokeIsNotReportedAsAChangeToTheArtworksLook()
+    {
+        var session = new EditorSession(new HexDocument(8, 8));
+        var reported = EditorChange.Pixels;
+        session.Changed += change => reported = change;
+        session.Paint(new(1, 1), Red); session.EndStroke();
+        session.Undo();
+        Assert.True((reported & EditorChange.Pixels) != 0);
+        Assert.True((reported & EditorChange.Artwork) == 0);
+        session.Redo();
+        Assert.True((reported & EditorChange.Artwork) == 0);
+        Assert.Equal(Red, session.Document.Layers[0].Cells[session.Document.IndexOf(new(1, 1))]);
+    }
+
+    [Fact]
+    public void OnlyChangesThatAlterHowCellsLookAreReportedAsArtwork()
+    {
+        var session = new EditorSession(new HexDocument(8, 8));
+        var reported = EditorChange.Pixels;
+        session.Changed += change => reported = change;
+        void Expect(bool artwork, Action change)
+        {
+            change();
+            Assert.Equal(artwork, (reported & EditorChange.Artwork) != 0);
+            Assert.True((reported & EditorChange.Structure) != 0);
+            session.Undo();
+            Assert.Equal(artwork, (reported & EditorChange.Artwork) != 0);
+            session.Redo();
+            Assert.Equal(artwork, (reported & EditorChange.Artwork) != 0);
+        }
+        Expect(false, session.AddLayer);
+        Expect(false, () => session.SetLayerName("Named"));
+        Expect(false, () => session.SetLayerLocked(0, true));
+        Expect(false, () => session.AddPaletteColor(0xFF123456));
+        Expect(true, () => session.SetLayerVisible(0, false));
+        Expect(true, () => session.SetLayerOpacity(100));
+        Expect(true, () => session.SetBackgroundColor(0xFF654321));
+        Expect(true, () => session.MoveLayer(-1));
+        Expect(true, session.DeleteLayer);
+        session.SelectLayer(0);
+        Assert.True((reported & EditorChange.Artwork) == 0);
+    }
+
     [Fact]
     public void BrushDiskContainsTheSixHexNeighbors()
     {

@@ -59,4 +59,18 @@ public static class HexGeometry
     public static HexCoordinate FromPoint(double x, double y, HexOrientation orientation, double radius = 1) => orientation == HexOrientation.PointyTop
         ? HexCoordinate.Round((Math.Sqrt(3) / 3 * x - y / 3) / radius, 2.0 / 3 * y / radius)
         : HexCoordinate.Round(2.0 / 3 * x / radius, (-x / 3 + Math.Sqrt(3) / 3 * y) / radius);
+
+    // The six neighbours of a cell as steps in columns and rows, which depend only on whether the cell's
+    // line -- its row when pointy-topped, its column when flat-topped -- is odd or even. The same six cells
+    // Directions reaches through axial coordinates, for a caller that is already holding a column and a row
+    // and would otherwise convert there and back six times a cell.
+    public static ReadOnlySpan<(int Column, int Row)> NeighborOffsets(HexOrientation orientation, int line) =>
+        orientation == HexOrientation.PointyTop
+            ? (line & 1) == 0 ? PointyEvenRow : PointyOddRow
+            : (line & 1) == 0 ? FlatEvenColumn : FlatOddColumn;
+
+    private static readonly (int, int)[] PointyEvenRow = [(1, 0), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1)];
+    private static readonly (int, int)[] PointyOddRow = [(1, 0), (1, -1), (0, -1), (-1, 0), (0, 1), (1, 1)];
+    private static readonly (int, int)[] FlatEvenColumn = [(1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (0, 1)];
+    private static readonly (int, int)[] FlatOddColumn = [(1, 1), (1, 0), (0, -1), (-1, 0), (-1, 1), (0, 1)];
 }

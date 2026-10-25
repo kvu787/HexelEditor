@@ -129,14 +129,13 @@ public partial class MainWindow : Window
 
     private void SessionChanged(EditorChange change)
     {
-        if ((change & EditorChange.Structure) != 0)
-        {
-            RefreshPanels();
-            // A structural change is anything that alters what a cell looks like without altering the cell:
-            // a layer hidden, reordered or made see-through, a new canvas background, an undo of any of them.
-            // The canvas keeps composited colour in a raster, so all of it is stale.
-            EditorCanvas.InvalidateArtwork();
-        }
+        if ((change & EditorChange.Structure) != 0) RefreshPanels();
+        // Only what alters how cells look without altering the cells: a layer hidden, reordered or made
+        // see-through, a new canvas background, an undo of any of them. The canvas keeps composited colour in
+        // a raster, and for those all of it is stale. For the rest of the structural changes -- choosing a
+        // layer, renaming or locking one, a palette colour -- it is not, and rebuilding it anyway was a
+        // whole-canvas recomposite and a sixteen megabyte upload for nothing.
+        if ((change & EditorChange.Artwork) != 0) EditorCanvas.InvalidateArtwork();
         EditorCanvas.InvalidateVisual(); UpdateHeader();
     }
 

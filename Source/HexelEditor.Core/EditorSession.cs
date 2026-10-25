@@ -1,7 +1,14 @@
 namespace HexelEditor.Core;
 
+// What a change touched, so a listener does only the work that change calls for. Pixels: cells were
+// written. Structure: the layer list, the active layer, the palette or the background changed, so the panels
+// that show them are stale. Selection and History say what they say. Artwork: the composited look of cells
+// changed without the cells themselves changing -- a layer hidden, reordered or made see-through, a new
+// background -- so a cache of composited colour is stale from end to end. Structure without Artwork is the
+// common case: choosing a layer, renaming one, locking one or adding a palette colour changes what the panels
+// show and nothing about what the canvas shows, and used to cost a whole-canvas recomposite and re-upload.
 [Flags]
-public enum EditorChange { Pixels = 1, Structure = 2, Selection = 4, History = 8, All = 15 }
+public enum EditorChange { Pixels = 1, Structure = 2, Selection = 4, History = 8, Artwork = 16, All = 31 }
 
 public sealed class EditorSession
 {
@@ -130,14 +137,23 @@ public sealed class EditorSession
         visited.Add(start);
         var pending = new Queue<int>();
         pending.Enqueue(start);
+        int width = Document.Width, height = Document.Height;
+        var pointyTop = Document.Orientation == HexOrientation.PointyTop;
+        var selecting = Selection.Count > 0;
         while (pending.TryDequeue(out var index))
         {
             SetPixel(index, color);
-            var reached = Document.CoordinateAt(index);
-            foreach (var direction in HexCoordinate.Directions)
+            // The neighbours in columns and rows directly, from the parity of the line the cell is on,
+            // rather than through axial coordinates and back. The round trip was most of what a fill cost.
+            var column = index % width;
+            var row = index / width;
+            foreach (var (deltaColumn, deltaRow) in HexGeometry.NeighborOffsets(Document.Orientation, pointyTop ? row : column))
             {
-                var neighbor = Document.IndexOf(reached + direction);
-                if (neighbor >= 0 && cells[neighbor] == target && (Selection.Count == 0 || Selection.Contains(neighbor)) && visited.Add(neighbor)) pending.Enqueue(neighbor);
+                var neighborColumn = column + deltaColumn;
+                var neighborRow = row + deltaRow;
+                if ((uint)neighborColumn >= (uint)width || (uint)neighborRow >= (uint)height) continue;
+                var neighbor = neighborRow * width + neighborColumn;
+                if (cells[neighbor] == target && (!selecting || Selection.Contains(neighbor)) && visited.Add(neighbor)) pending.Enqueue(neighbor);
             }
         }
         EndStroke("Flood fill");
@@ -285,7 +301,9 @@ public sealed class EditorSession
     public void AddLayer()
     {
         Document.ValidateLayerCount(Document.Layers.Count + 1);
-        ChangeDocument("Add layer", () =>
+        // A new layer is blank, so nothing composited changes; and by the time its addition is undone, every
+        // stroke made on it has been undone first, so it is blank again then too.
+        ChangeDocument("Add layer", artwork: false, () =>
         {
             var index = ActiveLayer + 1;
             Document.Layers.Insert(index, new HexLayer(Document.CellCount) { Name = $"Layer {Document.Layers.Count + 1}" });
@@ -335,7 +353,7 @@ public sealed class EditorSession
     public void DeleteLayer()
     {
         if (Document.Layers.Count == 1) return;
-        ChangeDocument("Delete layer", () =>
+        ChangeDocument("Delete layer", artwork: true, () =>
         {
             Document.Layers.RemoveAt(ActiveLayer);
             ActiveLayer = Math.Min(ActiveLayer, Document.Layers.Count - 1);
@@ -346,33 +364,37 @@ public sealed class EditorSession
     {
         var target = ActiveLayer + offset;
         if (target < 0 || target >= Document.Layers.Count) return;
-        ChangeDocument("Reorder layer", () =>
+        ChangeDocument("Reorder layer", artwork: true, () =>
         {
             (Document.Layers[target], Document.Layers[ActiveLayer]) = (Document.Layers[ActiveLayer], Document.Layers[target]);
             ActiveLayer = target;
         });
     }
 
-    public void SetLayerName(string name) { if (!string.IsNullOrWhiteSpace(name) && Document.Layers[ActiveLayer].Name != name.Trim()) ChangeDocument("Rename layer", () => Document.Layers[ActiveLayer].Name = name.Trim()); }
-    public void SetLayerVisible(int index, bool visible) { if (Document.Layers[index].Visible != visible) ChangeDocument("Layer visibility", () => Document.Layers[index].Visible = visible); }
-    public void SetLayerLocked(int index, bool locked) { if (Document.Layers[index].Locked != locked) ChangeDocument("Layer lock", () => Document.Layers[index].Locked = locked); }
-    public void SetLayerOpacity(byte opacity) { if (Document.Layers[ActiveLayer].Opacity != opacity) ChangeDocument("Layer opacity", () => Document.Layers[ActiveLayer].Opacity = opacity); }
-    public void SetBackgroundColor(uint color) { var opaque = color | 0xFF000000; if (Document.BackgroundColor != opaque) ChangeDocument("Background color", () => Document.BackgroundColor = opaque); }
+    public void SetLayerName(string name) { if (!string.IsNullOrWhiteSpace(name) && Document.Layers[ActiveLayer].Name != name.Trim()) ChangeDocument("Rename layer", artwork: false, () => Document.Layers[ActiveLayer].Name = name.Trim()); }
+    public void SetLayerVisible(int index, bool visible) { if (Document.Layers[index].Visible != visible) ChangeDocument("Layer visibility", artwork: true, () => Document.Layers[index].Visible = visible); }
+    public void SetLayerLocked(int index, bool locked) { if (Document.Layers[index].Locked != locked) ChangeDocument("Layer lock", artwork: false, () => Document.Layers[index].Locked = locked); }
+    public void SetLayerOpacity(byte opacity) { if (Document.Layers[ActiveLayer].Opacity != opacity) ChangeDocument("Layer opacity", artwork: true, () => Document.Layers[ActiveLayer].Opacity = opacity); }
+    public void SetBackgroundColor(uint color) { var opaque = color | 0xFF000000; if (Document.BackgroundColor != opaque) ChangeDocument("Background color", artwork: true, () => Document.BackgroundColor = opaque); }
     public bool AddPaletteColor(uint color)
     {
         if (Document.Palette.Contains(color) || Document.Palette.Count >= HexDocument.MaximumPaletteColors) return false;
-        ChangeDocument("Add palette color", () => Document.Palette.Add(color));
+        ChangeDocument("Add palette color", artwork: false, () => Document.Palette.Add(color));
         return true;
     }
 
-    private void ChangeDocument(string label, Action change)
+    // Records a change to the document's structure. Whether it is one that alters what the cells look like
+    // is said by the caller, because it is part of the record: undoing or redoing it later has to report the
+    // same thing, and what it reports decides whether the canvas rebuilds its composited colour.
+    private void ChangeDocument(string label, bool artwork, Action change)
     {
         EndStroke();
         var before = new EditorState(Document.CloneStructure(), ActiveLayer);
         change();
         var after = new EditorState(Document.CloneStructure(), ActiveLayer);
-        Commit(label, new DocumentChange(before, after));
-        Notify(EditorChange.All);
+        var record = new DocumentChange(before, after, artwork);
+        Commit(label, record);
+        Notify(record.Reports);
     }
 
     private void Commit(string label, IChange change)
@@ -392,7 +414,7 @@ public sealed class EditorSession
         if (undo.Count == 0) return;
         var item = undo[^1]; undo.RemoveAt(undo.Count - 1);
         item.Change.Apply(this, false); revision = item.BeforeRevision; redo.Add(item);
-        Notify(EditorChange.All);
+        Notify(item.Change.Reports);
     }
 
     public void Redo()
@@ -401,7 +423,7 @@ public sealed class EditorSession
         if (redo.Count == 0) return;
         var item = redo[^1]; redo.RemoveAt(redo.Count - 1);
         item.Change.Apply(this, true); revision = item.AfterRevision; undo.Add(item);
-        Notify(EditorChange.All);
+        Notify(item.Change.Reports);
     }
 
     /// <summary>
@@ -455,7 +477,10 @@ public sealed class EditorSession
         }
     }
 
-    private interface IChange { long Bytes { get; } void Apply(EditorSession session, bool forward); }
+    // What applying the change in either direction touches, which is what the listeners are told. Undoing a
+    // brush stroke used to report everything, and everything included a whole-canvas recomposite and
+    // re-upload for a change to a handful of cells.
+    private interface IChange { long Bytes { get; } EditorChange Reports { get; } void Apply(EditorSession session, bool forward); }
     private sealed record HistoryItem(string Label, IChange Change, long BeforeRevision, long AfterRevision);
     private sealed record EditorState(HexDocument Document, int Layer);
     private sealed record SelectionState(int[] Indices, HexCoordinate? Pivot);
@@ -464,6 +489,8 @@ public sealed class EditorSession
     private sealed record PixelChange(int Layer, PixelDelta[] Edits, SelectionState? BeforeSelection, SelectionState? AfterSelection) : IChange
     {
         public long Bytes => 12L * Edits.Length + 4L * ((BeforeSelection?.Indices.Length ?? 0) + (AfterSelection?.Indices.Length ?? 0));
+        // The active layer can move, which the panels show, so Structure is reported as well as the cells.
+        public EditorChange Reports => EditorChange.Pixels | EditorChange.Selection | EditorChange.History | EditorChange.Structure;
         public void Apply(EditorSession session, bool forward)
         {
             session.ActiveLayer = Layer;
@@ -476,11 +503,13 @@ public sealed class EditorSession
             if (selection != null) { session.Selection.Clear(); session.Selection.UnionWith(selection.Indices); session.selectionPivot = selection.Pivot; }
         }
     }
-    private sealed record DocumentChange(EditorState Before, EditorState After) : IChange
+    private sealed record DocumentChange(EditorState Before, EditorState After, bool Artwork) : IChange
     {
         // Structure only: a layer's properties and the palette. The cells are shared, not copied, so they are
         // not this record's to account for.
         public long Bytes => StructureBytes(Before) + StructureBytes(After);
+
+        public EditorChange Reports => Artwork ? EditorChange.All : EditorChange.All & ~EditorChange.Artwork;
 
         private static long StructureBytes(EditorState state) =>
             128L + 64L * state.Document.Layers.Count + 4L * state.Document.Palette.Count;
@@ -490,8 +519,10 @@ public sealed class EditorSession
             var state = forward ? After : Before;
             session.Document = state.Document.CloneStructure(); session.ActiveLayer = state.Layer;
             session.Selection.Clear(); session.selectionPivot = null;
-            // The cells are the same arrays, but which layers there are, and how they look, is not.
-            session.MarkAllCellsDirty();
+            // The cells are the same arrays, but how they look may not be: which layers there are, in what
+            // order, how see-through, on what background. A record that changed none of that leaves the
+            // composited colour alone.
+            if (Artwork) session.MarkAllCellsDirty();
         }
     }
 }
