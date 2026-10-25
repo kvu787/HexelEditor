@@ -1,10 +1,18 @@
 # Performance hotspots
 
-Every figure here comes from one run, `LogOutput/Measurement_2026-10-25_10-01-10`, taken with
-`pwsh -File ./Scripts/Measure.ps1`. That runs the editor in its measurement mode on a Win32 desktop of its
+All ten were measured, nine of them were removed, and the tenth is described at the end with what it would
+cost. The figures below are before and after, both from `Scripts/Measure.ps1`.
+
+The before figures come from one run, `LogOutput/Measurement_2026-10-25_10-01-10`; the after figures from
+the run taken once each change was in. Both with `pwsh -File ./Scripts/Measure.ps1`, which runs the editor in its measurement mode on a Win32 desktop of its
 own and times its own objects: the real renderer, the real canvas control, the real session and the real
 panels. Figures are medians in milliseconds over the run count the report states. Re-run the script to
 refresh them; the raw samples sit beside each report in `Measurement.json`.
+
+One caveat on reading them: the machine belongs to someone who is using it, and a run taken while they are
+shows it. Medians move by several milliseconds between runs and the highest samples by far more. Where a
+figure here looks steadier than the run it came from, it is because the quiet runs and the busy ones agree
+on their lowest samples and disagree on everything else.
 
 Machine: Intel Core Ultra 9 275HX, 64 GB DDR5-5600, NVIDIA GeForce RTX 5090 Laptop GPU. The OpenGL context
 lands on the discrete GPU over PCIe, which the session log records on every run. That matters: reading a
@@ -15,7 +23,67 @@ not the wait for the display, because none of those can be measured on a desktop
 displayed, which is where validation requires this to run. The display refreshes at 119 Hz, so a frame has
 about 8.4 ms before it misses one.
 
-## The ten hotspots, worst first
+## What was done
+
+| #  | Hotspot                                   |       Before |     After | What changed                                             |
+| -- | ----------------------------------------- | -----------: | --------: | -------------------------------------------------------- |
+| 1  | Selection highlights, a path a cell       |      2637 ms |  0.015 ms | a mask the shader reads, instead of a path a cell        |
+| 2  | Colour texture re-uploaded whole          |       9.2 ms |   0.08 ms | only the texels the edit wrote are sent                  |
+| 3  | Copying the frame onto the canvas surface |  4.4/14.7 ms |      0 ms | the frame is read straight into the surface's own pixels |
+| 4  | Reading the frame back from the GPU       | 1.14/3.70 ms | unchanged | still there; see "What is left" below                    |
+| 5  | Saving and loading a project              |   478/272 ms |  40/24 ms | a layer's cells go out and come back in one call         |
+| 6  | The dotted backdrop                       |   3.0/5.3 ms |      0 ms | the shader works the pattern out per pixel               |
+| 7  | Whole-canvas editing operations           |    29-160 ms |  12-57 ms | the undo record, the fill's neighbours, and four queries |
+| 8  | Recompositing every cell                  |        11 ms |    1.2 ms | the rows are composited at the same time                 |
+| 9  | The selection as a `HashSet<int>`         |       4.1 ms |   0.03 ms | a bit a cell                                             |
+| 10 | Rebuilding the palette's 256 swatches     |       2.1 ms |   0.10 ms | the swatches are kept and updated                        |
+
+What that adds up to, for the things a person waits on, on a 2000 x 1000 canvas:
+
+| Interaction                      |   Before |   After |
+| -------------------------------- | -------: | ------: |
+| Paint one cell                   | 18.45 ms | 1.31 ms |
+| Drag the brush over 60 cells     | 18.33 ms | 1.44 ms |
+| Pan the canvas                   |  8.31 ms | 1.18 ms |
+| Undo a whole-canvas change       | 29.53 ms | 11.9 ms |
+| Hide or show a layer             | 29.79 ms | 11.9 ms |
+| A frame with everything selected |  2646 ms | 1.43 ms |
+| A frame while painting, at 4K    | 32.99 ms | 3.70 ms |
+
+## What is left
+
+**The frame is still read back from the GPU**: 1.14 ms at a window's size, 3.70 ms at the validation
+display's. It is now the whole of a frame -- everything around it costs less than a tenth of a millisecond --
+but a frame is 1.3 ms against the 8.4 ms a 119 Hz display allows, so the renderer is no longer what limits
+anything.
+
+Removing it means `SKGLElement`, and that is a different kind of change from the nine above. The shader and
+its two textures would have to live in the element's own context on the interface thread, where this
+renderer's history records a GL context stopping the whole window from painting. The pixel-exact checks call
+`GpuHexRenderer.Render` directly, so they would keep the offscreen path and would then be verifying a
+renderer the window does not use. And the display pass captures with `PrintWindow`, which may or may not see
+a surface composited through `D3DImage` -- that has to be tried, not assumed.
+
+**The whole-canvas editing operations are still the slowest things here**: flood fill 57 ms, move a
+selection over the canvas 47 ms, clear every cell 24 ms, rotate 32 ms. All of them run on the thread handling
+input, with no feedback while they do. What is left in them is the per-cell work itself rather than anything
+around it.
+
+## A caution the hard way
+
+The sub-rectangle upload was written twice. The first version kept a GL texture of its own and updated it
+with `glTexSubImage2D`, which is the direct way to say it, and it was fastest: 0.015 ms against the 0.08 ms
+the second version costs.
+
+It also left the real window blank -- not the canvas, the whole window, toolbar included -- while every
+headless check passed. That is the same failure this renderer's own header records from owning a GL context
+on the wrong thread, and it was found by the display pass on NE18NZ2 and nothing else. Bisecting put it on
+that commit exactly.
+
+Raw GL calls into a context Skia is also driving are not worth what they cost here. The second version does
+the same work through a surface Skia owns, for 0.065 ms more a frame.
+
+## The ten hotspots as they were found
 
 | #  | Hotspot                                            | Cost                                                                         | Where it is                                       |
 | -- | -------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------- |
