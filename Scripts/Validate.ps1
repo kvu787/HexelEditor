@@ -50,6 +50,16 @@ Write-Output ''
 $watch = Start-DisruptionWatch -AllowedMonitor $Display
 $verifyOutput = @()
 try {
+    # The rules that decide whether this run disturbed anyone, checked first. Everything below is judged by
+    # them, so a run whose verdict cannot be trusted is worth stopping at rather than reporting.
+    try {
+        $ruleOutput = & (Join-Path $PSScriptRoot 'TestDisruptionGuard.ps1')
+        Add-Step -Name 'Disruption guard rules' -Outcome 'passed' -Detail ($ruleOutput -join ' ')
+    }
+    catch {
+        Add-Step -Name 'Disruption guard rules' -Outcome 'failed' -Detail "$_"
+    }
+
     # Build, unit tests, and the real interface driven inside a hidden rendering host. None of this needs a
     # display, so it is the part that works whether the machine is locked or not.
     try {
@@ -108,7 +118,10 @@ finally {
 }
 
 if ($guard.Passed) {
-    Add-Step -Name 'Did not disturb the machine' -Outcome 'passed' -Detail "$($guard.Observations.Count) window events seen over $($guard.Seconds) s, none on a user display and none taking focus"
+    # Clip changes are worth reporting even when none of them was this run's: they are the machine being used
+    # while it ran, which is the condition all of this exists to survive.
+    $clips = if ($guard.CursorClipChanges -gt 0) { ", and $($guard.CursorClipChanges) cursor clip changes that belonged to someone else" } else { '' }
+    Add-Step -Name 'Did not disturb the machine' -Outcome 'passed' -Detail "$($guard.Observations.Count) window events seen over $($guard.Seconds) s, none on a user display and none taking focus$clips"
 }
 else {
     Add-Step -Name 'Did not disturb the machine' -Outcome 'failed' -Detail ($guard.Violations -join ' | ')
@@ -135,7 +148,7 @@ $steps | Format-Table -AutoSize | Out-String | Set-Content -LiteralPath (Join-Pa
 
 Write-Output ''
 if ($summary.Passed) {
-    Write-Output "Validation passed. Nothing appeared outside $Display, the foreground never moved, and the cursor was never confined."
+    Write-Output "Validation passed. Nothing of the run appeared outside $Display, took the foreground, or confined the cursor."
     Write-Output "Artifacts: $validationPath"
 }
 else {

@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 #   - a window of the run moves onto one of the user's displays after being shown
 #   - a window of the run takes the foreground, which takes the keyboard with it
 #   - a window of the run opens a dialog on a user display, or grabs the mouse
-#   - the cursor is confined, which steers the user's pointer
+#   - a window of the run confines the cursor, which steers the user's pointer
 # Visibility and activation are observed through SetWinEventHook, so the moment a window gains WS_VISIBLE is
 # recorded with the bounds it had at that moment. Polling cannot promise that: a window shown and then moved
 # between two samples would slip through, which is exactly the split-second flash this has to rule out.
@@ -141,12 +141,31 @@ public sealed class DisruptionWatcher
                 {
                     lastClip = clip;
                     Interlocked.Increment(ref CursorClipChanges);
+                    // Nothing says which process confined the cursor, so the window in front when it happened
+                    // stands in for one: Windows only honours a clip for the process owning the foreground
+                    // window, which is why a game loses the pointer the moment it loses the foreground. That
+                    // costs no coverage here, because a window of the run reaching the foreground at all is
+                    // already a violation in its own right, so a clip this run could have made is one this
+                    // run was going to fail for anyway.
+                    //
+                    // Without it, the user's own fullscreen game grabbing their pointer on their own screen
+                    // reads exactly like the run doing it, and a guard that fails for what it is meant to
+                    // tolerate teaches whoever reads it to re-run until it passes.
+                    IntPtr front = GetForegroundWindow();
+                    int owner;
+                    GetWindowThreadProcessId(front, out owner);
                     observations.Enqueue(new DisruptionObservation
                     {
                         Kind = "CursorClipChanged",
                         Milliseconds = clock.ElapsedMilliseconds,
+                        ProcessId = owner,
+                        ProcessName = NameOf(owner),
+                        Window = front.ToInt64(),
+                        Title = TitleOf(front),
+                        Class = ClassOf(front),
+                        // The bounds of a clip observation are the clip, not a window.
                         Left = clip.Left, Top = clip.Top, Right = clip.Right, Bottom = clip.Bottom,
-                        Watched = true
+                        Watched = IsWatched(owner)
                     });
                 }
                 Thread.Sleep(5);
@@ -381,29 +400,57 @@ function Test-WithinAllowedDisplay {
         $Observation.Bottom -le ($Allowed.Y + $Allowed.Height)
 }
 
-function Stop-DisruptionWatch {
-    param([Parameter(Mandatory)][PSCustomObject] $Watch)
-    $watcher = $Watch.Watcher
-    $observations = $watcher.Stop()
+# A clip that covers the whole virtual desktop is the cursor free rather than held: it is what Windows reports
+# when nothing is confining the pointer, and what a program that was holding it leaves behind on letting go.
+# Reading that as a confinement turns a game releasing the mouse into a failure.
+function Test-CursorConfined {
+    param([Parameter(Mandatory)] $Observation, $Virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen)
+    -not ($Observation.Left -le $Virtual.Left -and $Observation.Top -le $Virtual.Top -and
+          $Observation.Right -ge $Virtual.Right -and $Observation.Bottom -ge $Virtual.Bottom)
+}
+
+# Separate from collecting the observations so that the judgement can be exercised on its own, with
+# observations written by hand. A run that disturbs the machine is rare and not reproducible on demand, which
+# is exactly why the rules that decide need to be checkable without one.
+function Get-DisruptionViolations {
+    param(
+        [Parameter(Mandatory)][PSCustomObject] $Allowed,
+        [Parameter(Mandatory)][string] $AllowedMonitor,
+        [AllowEmptyCollection()][Parameter(Mandatory)] $Observations
+    )
     $violations = @()
-    foreach ($observation in $observations) {
+    foreach ($observation in $Observations) {
+        # Everything else on the machine belongs to the user, including a game of theirs that takes the
+        # foreground, captures the mouse and confines the pointer while this runs.
+        if (-not $observation.Watched) { continue }
+        # A clip observation's bounds are the clip rather than a window, so it reports itself rather than
+        # borrowing the wording the window rules share.
         if ($observation.Kind -eq 'CursorClipChanged') {
-            $violations += "The cursor was confined to $($observation.Left),$($observation.Top) $($observation.Right),$($observation.Bottom), which steers the user's pointer."
+            if (Test-CursorConfined -Observation $observation) {
+                $violations += "A window of the run confined the cursor to $($observation.Left),$($observation.Top) $($observation.Right),$($observation.Bottom), which steers the user's pointer: $($observation.ProcessName) ($($observation.ProcessId)) window '$($observation.Title)' was in front after $($observation.Milliseconds) ms"
+            }
             continue
         }
-        if (-not $observation.Watched) { continue }
         $where = "$($observation.ProcessName) ($($observation.ProcessId)) window '$($observation.Title)' [$($observation.Class)] at $($observation.Left),$($observation.Top) $($observation.Right),$($observation.Bottom) after $($observation.Milliseconds) ms"
-        $inside = (Test-WithinAllowedDisplay -Allowed $Watch.Allowed -Observation $observation) -or
+        $inside = (Test-WithinAllowedDisplay -Allowed $Allowed -Observation $observation) -or
                   -not (Test-OnAnyDisplay -Observation $observation)
         switch ($observation.Kind) {
-            'WindowShown' { if (-not $inside) { $violations += "A window became visible outside $($Watch.AllowedMonitor): $where" } }
-            'WindowMoved' { if (-not $inside) { $violations += "A window moved outside $($Watch.AllowedMonitor): $where" } }
-            'DialogShown' { if (-not $inside) { $violations += "A dialog opened outside $($Watch.AllowedMonitor): $where" } }
+            'WindowShown' { if (-not $inside) { $violations += "A window became visible outside ${AllowedMonitor}: $where" } }
+            'WindowMoved' { if (-not $inside) { $violations += "A window moved outside ${AllowedMonitor}: $where" } }
+            'DialogShown' { if (-not $inside) { $violations += "A dialog opened outside ${AllowedMonitor}: $where" } }
             'Foreground' { $violations += "A window of the run took the foreground: $where" }
             'ForegroundSample' { $violations += "A window of the run took the foreground: $where" }
             'MouseCaptured' { $violations += "A window of the run captured the mouse: $where" }
         }
     }
+    , $violations
+}
+
+function Stop-DisruptionWatch {
+    param([Parameter(Mandatory)][PSCustomObject] $Watch)
+    $watcher = $Watch.Watcher
+    $observations = $watcher.Stop()
+    $violations = Get-DisruptionViolations -Allowed $Watch.Allowed -AllowedMonitor $Watch.AllowedMonitor -Observations $observations
     [PSCustomObject]@{
         Passed = $violations.Count -eq 0
         Violations = $violations
