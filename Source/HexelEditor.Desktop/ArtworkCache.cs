@@ -33,6 +33,13 @@ public sealed class ArtworkCache : IDisposable
     // raster watches this so that panning and zooming, which change no cell, re-upload nothing.
     public int Version { get; private set; }
 
+    /// <summary>
+    /// The texels the last refresh wrote, or null when it wrote none. In texels rather than cells, because
+    /// what reads this is uploading part of a texture and the two are not the same thing: a cell occupies
+    /// two texels along the axis alternate lines are offset along, and which two depends on its parity.
+    /// </summary>
+    public (int X, int Y, int Width, int Height)? LastWritten { get; private set; }
+
     public void InvalidateEverything() => everythingDirty = true;
 
     // Dirt is accumulated rather than applied at once, because a frame drawn at a zoom that does not use the
@@ -52,6 +59,7 @@ public sealed class ArtworkCache : IDisposable
     // stroke costs the cells it touched; a new document or a change to a layer costs the whole canvas once.
     public SKBitmap Refresh(HexDocument document)
     {
+        LastWritten = null;
         var rebuildEverything = everythingDirty;
         if (raster == null || cellColumns != document.Width || cellRows != document.Height || orientation != document.Orientation)
         {
@@ -99,6 +107,7 @@ public sealed class ArtworkCache : IDisposable
         minRow = Math.Max(0, minRow);
         maxColumn = Math.Min(document.Width - 1, maxColumn);
         maxRow = Math.Min(document.Height - 1, maxRow);
+        if (minColumn > maxColumn || minRow > maxRow) return;
         var stride = raster.Width;
         var background = document.BackgroundColor;
         var pointyTop = document.Orientation == HexOrientation.PointyTop;
@@ -124,6 +133,17 @@ public sealed class ArtworkCache : IDisposable
             }
         }
         raster.NotifyPixelsChanged();
+        // The cells written, as the texels they were written to. A cell's two texels run along the offset
+        // axis and start one further on for an odd line, so the span covers one extra texel at each end
+        // rather than working the parities out again.
+        var texels = pointyTop
+            ? (X: minColumn * PixelsPerCell, Y: minRow,
+               Width: (maxColumn - minColumn + 1) * PixelsPerCell + 1, Height: maxRow - minRow + 1)
+            : (X: minColumn, Y: minRow * PixelsPerCell,
+               Width: maxColumn - minColumn + 1, Height: (maxRow - minRow + 1) * PixelsPerCell + 1);
+        LastWritten = (texels.X, texels.Y,
+            Math.Min(texels.Width, raster.Width - texels.X),
+            Math.Min(texels.Height, raster.Height - texels.Y));
         Version++;
     }
 
