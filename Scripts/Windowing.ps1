@@ -41,6 +41,33 @@ public static class NativeWindowing
         return best;
     }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr handle, out Rect bounds);
+    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out Rect value, int size);
+
+    // The part of a window that the window itself draws, which is what PrintWindow can fill and so what a
+    // picture of it should hold.
+    //
+    // A window rect takes in the invisible resize border Windows leaves around a window: eight pixels at the
+    // left, the right and the bottom, and none at the top. Nothing draws there, so a capture made at that size
+    // comes back with a black edge on three sides. DWM reports the frame that is on screen instead, and the
+    // outermost pixel of that frame is the border DWM draws itself, which the window does not draw either. So
+    // the frame is taken in by one more pixel on each side that had an invisible border to begin with.
+    public static Rect GetDrawnBounds(IntPtr handle)
+    {
+        Rect window;
+        GetWindowRect(handle, out window);
+        Rect frame;
+        if (DwmGetWindowAttribute(handle, ExtendedFrameBounds, out frame, Marshal.SizeOf(typeof(Rect))) != 0
+            || frame.Right <= frame.Left || frame.Bottom <= frame.Top)
+        {
+            return window;
+        }
+        if (frame.Left > window.Left) frame.Left++;
+        if (frame.Top > window.Top) frame.Top++;
+        if (frame.Right < window.Right) frame.Right--;
+        if (frame.Bottom < window.Bottom) frame.Bottom--;
+        return frame.Right > frame.Left && frame.Bottom > frame.Top ? frame : window;
+    }
+    private const int ExtendedFrameBounds = 9;
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr handle, IntPtr deviceContext, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr handle, System.Text.StringBuilder text, int count);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool EnumDisplayDevicesW(string device, uint index, ref DisplayDevice target, uint flags);
@@ -159,6 +186,15 @@ function Save-WindowImage {
     $width = $bounds.Right - $bounds.Left
     $height = $bounds.Bottom - $bounds.Top
     if ($width -lt 1 -or $height -lt 1) { throw 'The window has no area to capture.' }
+    # PrintWindow draws from the window rect's corner, so the capture is taken at that size and then cropped
+    # to the frame the window really occupies. Cropping rather than asking for a smaller bitmap, because the
+    # window draws where it draws: a smaller bitmap would cut the right and bottom off instead of the border.
+    $drawn = [NativeWindowing]::GetDrawnBounds($Handle)
+    $cropX = [Math]::Max(0, $drawn.Left - $bounds.Left)
+    $cropY = [Math]::Max(0, $drawn.Top - $bounds.Top)
+    $cropWidth = [Math]::Min($drawn.Right - $drawn.Left, $width - $cropX)
+    $cropHeight = [Math]::Min($drawn.Bottom - $drawn.Top, $height - $cropY)
+    if ($cropWidth -lt 1 -or $cropHeight -lt 1) { throw 'The drawn part of the window has no area to capture.' }
     $bitmap = New-Object System.Drawing.Bitmap $width, $height
     try {
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
@@ -171,8 +207,11 @@ function Save-WindowImage {
             finally { $graphics.ReleaseHdc($deviceContext) }
         }
         finally { $graphics.Dispose() }
-        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $crop = New-Object System.Drawing.Rectangle $cropX, $cropY, $cropWidth, $cropHeight
+        $cropped = $bitmap.Clone($crop, $bitmap.PixelFormat)
+        try { $cropped.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png) }
+        finally { $cropped.Dispose() }
     }
     finally { $bitmap.Dispose() }
-    [PSCustomObject]@{ Path = $Path; Width = $width; Height = $height }
+    [PSCustomObject]@{ Path = $Path; Width = $cropWidth; Height = $cropHeight }
 }
