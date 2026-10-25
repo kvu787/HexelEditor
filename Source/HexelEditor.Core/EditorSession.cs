@@ -9,7 +9,8 @@ public sealed class EditorSession
     private const long HistoryBudget = 64 * 1024 * 1024;
     private readonly List<HistoryItem> undo = [];
     private readonly List<HistoryItem> redo = [];
-    private Dictionary<int, uint>? stroke;
+    private StrokeRecord? strokeRecord;
+    private bool stroking;
     private int strokeLayer;
     private SelectionState? strokeSelection;
     private HexCoordinate? selectionPivot;
@@ -20,7 +21,7 @@ public sealed class EditorSession
     public HexDocument Document { get; private set; }
     public int ActiveLayer { get; private set; }
     public CellSelection Selection { get; }
-    public bool IsDirty => revision != savedRevision || stroke?.Count > 0;
+    public bool IsDirty => revision != savedRevision || (stroking && strokeRecord!.Count > 0);
     public bool CanUndo => undo.Count > 0;
     public bool CanRedo => redo.Count > 0;
     public bool CanPaint => !Document.Layers[ActiveLayer].Locked;
@@ -39,8 +40,9 @@ public sealed class EditorSession
 
     public void BeginStroke(bool captureSelection = false)
     {
-        if (stroke != null) return;
-        stroke = [];
+        if (stroking) return;
+        (strokeRecord ??= new StrokeRecord(Document.CellCount)).Reset();
+        stroking = true;
         strokeLayer = ActiveLayer;
         strokeSelection = captureSelection ? CaptureSelection() : null;
     }
@@ -58,7 +60,7 @@ public sealed class EditorSession
         if (index < 0 || index >= Document.CellCount || (Selection.Count > 0 && !Selection.Contains(index))) return;
         var cells = Document.Layers[strokeLayer].Cells;
         if (cells[index] == color) return;
-        stroke!.TryAdd(index, cells[index]);
+        strokeRecord!.Record(index, cells[index]);
         cells[index] = color;
         MarkCellDirty(index);
     }
@@ -103,10 +105,10 @@ public sealed class EditorSession
 
     public void EndStroke(string label = "Brush stroke")
     {
-        if (stroke == null) return;
+        if (!stroking) return;
         var cells = Document.Layers[strokeLayer].Cells;
-        var edits = stroke.Where(pair => pair.Value != cells[pair.Key]).Select(pair => new PixelDelta(pair.Key, pair.Value, cells[pair.Key])).ToArray();
-        stroke = null;
+        var edits = strokeRecord!.Edits(cells);
+        stroking = false;
         if (edits.Length > 0) { Commit(label, new PixelChange(strokeLayer, edits, strokeSelection, strokeSelection == null ? null : CaptureSelection())); Notify(EditorChange.Pixels | EditorChange.History); }
         else Notify(EditorChange.History);
         strokeSelection = null;
@@ -121,15 +123,20 @@ public sealed class EditorSession
         var target = cells[start];
         if (target == color) return;
         BeginStroke();
-        var visited = new HashSet<int> { start };
+        // A bit a cell for where the fill has already been, and the cell's coordinate worked out once
+        // rather than once per neighbour: six conversions a cell became one, and on a full canvas that is
+        // twelve million of them saved.
+        var visited = new CellSelection(Document.CellCount);
+        visited.Add(start);
         var pending = new Queue<int>();
         pending.Enqueue(start);
         while (pending.TryDequeue(out var index))
         {
             SetPixel(index, color);
+            var reached = Document.CoordinateAt(index);
             foreach (var direction in HexCoordinate.Directions)
             {
-                var neighbor = Document.IndexOf(Document.CoordinateAt(index) + direction);
+                var neighbor = Document.IndexOf(reached + direction);
                 if (neighbor >= 0 && cells[neighbor] == target && (Selection.Count == 0 || Selection.Contains(neighbor)) && visited.Add(neighbor)) pending.Enqueue(neighbor);
             }
         }
@@ -194,18 +201,30 @@ public sealed class EditorSession
         if (!CanPaint) return;
         EndStroke();
         BeginStroke();
-        foreach (var index in Selection.Count > 0 ? Selection.ToArray() : Enumerable.Range(0, Document.CellCount)) SetPixel(index, 0);
+        if (Selection.Count > 0)
+            foreach (var index in Selection) SetPixel(index, 0);
+        else
+            for (var index = 0; index < Document.CellCount; index++) SetPixel(index, 0);
         EndStroke("Clear cells");
         Notify(EditorChange.Pixels);
     }
 
     public CellClipboard CopySelection()
     {
-        var indices = Selection.Count > 0 ? Selection.ToArray() : Enumerable.Range(0, Document.CellCount).ToArray();
-        var left = indices.Min(index => index % Document.Width);
-        var top = indices.Min(index => index / Document.Width);
+        var width = Document.Width;
         var cells = Document.Layers[ActiveLayer].Cells;
-        return new CellClipboard(indices.Select(index => new ClipboardCell(index % Document.Width - left, index / Document.Width - top, cells[index])).ToArray());
+        if (Selection.Count == 0)
+        {
+            // Nothing selected is the whole canvas, whose corner is its first cell.
+            var all = new ClipboardCell[Document.CellCount];
+            for (var index = 0; index < all.Length; index++) all[index] = new(index % width, index / width, cells[index]);
+            return new CellClipboard(all);
+        }
+        if (!Selection.TryBounds(width, out var left, out var top)) return new CellClipboard([]);
+        var copied = new ClipboardCell[Selection.Count];
+        var next = 0;
+        foreach (var index in Selection) copied[next++] = new(index % width - left, index / width - top, cells[index]);
+        return new CellClipboard(copied);
     }
 
     public void Paste(CellClipboard clipboard, int column, int row)
@@ -237,12 +256,22 @@ public sealed class EditorSession
 
     // Where a clipboard's cells land with its top left corner at this column and row, dropping whatever
     // would fall outside the canvas.
-    private (int Index, uint Color)[] CellsLandingAt(CellClipboard clipboard, int column, int row) =>
-        clipboard.Cells
-            .Select(cell => (Column: column + cell.Column, Row: row + cell.Row, cell.Color))
-            .Where(cell => cell.Column >= 0 && cell.Column < Document.Width && cell.Row >= 0 && cell.Row < Document.Height)
-            .Select(cell => (cell.Row * Document.Width + cell.Column, cell.Color))
-            .ToArray();
+    //
+    // One pass. As four chained queries it walked the clipboard four times and built a tuple for every cell
+    // at each stage, which on a selection covering a two million cell canvas was most of what moving one
+    // cost.
+    private (int Index, uint Color)[] CellsLandingAt(CellClipboard clipboard, int column, int row)
+    {
+        var landing = new List<(int Index, uint Color)>(clipboard.Cells.Length);
+        foreach (var cell in clipboard.Cells)
+        {
+            var atColumn = column + cell.Column;
+            var atRow = row + cell.Row;
+            if (atColumn < 0 || atColumn >= Document.Width || atRow < 0 || atRow >= Document.Height) continue;
+            landing.Add((atRow * Document.Width + atColumn, cell.Color));
+        }
+        return [.. landing];
+    }
 
     // Paints the cells, then selects them, and never in one pass: SetPixel refuses a cell outside a
     // selection that holds anything, so a selection grown as the painting went along would turn away every
@@ -268,14 +297,28 @@ public sealed class EditorSession
     {
         if (!CanPaint || Selection.Count == 0) return;
         EndStroke();
-        var selected = Selection.Select(index => (Coordinate: Document.CoordinateAt(index), Color: Document.Layers[ActiveLayer].Cells[index])).ToArray();
-        var pivot = selectionPivot ?? HexCoordinate.Round(selected.Average(cell => cell.Coordinate.Q), selected.Average(cell => cell.Coordinate.R));
+        var layerCells = Document.Layers[ActiveLayer].Cells;
+        var selected = new (HexCoordinate Coordinate, uint Color)[Selection.Count];
+        // The pivot is the average of the selected coordinates, summed on the way past rather than by
+        // walking the selection again for each of the two axes.
+        long sumQ = 0, sumR = 0;
+        var gathered = 0;
+        foreach (var index in Selection)
+        {
+            var coordinate = Document.CoordinateAt(index);
+            selected[gathered++] = (coordinate, layerCells[index]);
+            sumQ += coordinate.Q;
+            sumR += coordinate.R;
+        }
+        var pivot = selectionPivot ?? HexCoordinate.Round((double)sumQ / selected.Length, (double)sumR / selected.Length);
         var turns = (steps % 6 + 6) % 6;
         if (turns == 0) return;
         BeginStroke(captureSelection: true);
         foreach (var index in Selection) SetPixel(index, 0);
         Selection.Clear();
-        var destination = new HashSet<int>();
+        // A rotation sends distinct cells to distinct cells, so there is nothing here for a set to
+        // collapse and a list will do.
+        var destination = new List<int>(selected.Length);
         foreach (var cell in selected)
         {
             var relative = new HexCoordinate(cell.Coordinate.Q - pivot.Q, cell.Coordinate.R - pivot.R);
@@ -359,6 +402,57 @@ public sealed class EditorSession
         var item = redo[^1]; redo.RemoveAt(redo.Count - 1);
         item.Change.Apply(this, true); revision = item.AfterRevision; undo.Add(item);
         Notify(EditorChange.All);
+    }
+
+    /// <summary>
+    /// What each cell held before a stroke first touched it, which is what the stroke's undo entry is made
+    /// from.
+    /// </summary>
+    /// <remarks>
+    /// This was a dictionary from cell to previous colour. It is the right shape for the job and the wrong
+    /// one for the size: clearing a two million cell canvas, or filling it, or moving a selection that
+    /// covers it, put two million entries into a hash table and then read them all back out through a
+    /// query. Three parallel pieces do the same job without hashing anything -- a bit a cell saying whether
+    /// the cell has been recorded, and the cells and their colours in the order they were first touched --
+    /// and all three are reused from one stroke to the next, so a brush dab allocates nothing at all.
+    /// </remarks>
+    private sealed class StrokeRecord(int cellCount)
+    {
+        private readonly CellSelection recorded = new(cellCount);
+        private readonly List<int> cells = [];
+        private readonly List<uint> before = [];
+
+        public int Count => cells.Count;
+
+        public void Reset()
+        {
+            recorded.Clear();
+            cells.Clear();
+            before.Clear();
+        }
+
+        /// <summary>Notes what a cell held, the first time the stroke touches it and not after.</summary>
+        public void Record(int index, uint value)
+        {
+            if (!recorded.Add(index)) return;
+            cells.Add(index);
+            before.Add(value);
+        }
+
+        /// <summary>
+        /// The stroke as undo entries, leaving out the cells that ended the stroke holding what they
+        /// started it with.
+        /// </summary>
+        public PixelDelta[] Edits(uint[] current)
+        {
+            var edits = new List<PixelDelta>(cells.Count);
+            for (var entry = 0; entry < cells.Count; entry++)
+            {
+                var index = cells[entry];
+                if (before[entry] != current[index]) edits.Add(new PixelDelta(index, before[entry], current[index]));
+            }
+            return [.. edits];
+        }
     }
 
     private interface IChange { long Bytes { get; } void Apply(EditorSession session, bool forward); }
