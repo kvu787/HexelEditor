@@ -1,11 +1,12 @@
 # Performance hotspots
 
-All ten were measured and all ten were removed. The figures below are before and after, both from
-`Scripts/Measure.ps1`.
+All ten were measured and all ten were removed, and a second pass with the machine free found and removed
+four more. The figures below are before and after, both from `Scripts/Measure.ps1`.
 
 The before figures come from one run, `LogOutput/Measurement_2026-10-25_10-01-10`; the after figures from
-the run taken once each change was in, and the frame figures from `LogOutput/Measurement_2026-10-25_15-57-58`,
-taken once the readback was gone. All with `pwsh -File ./Scripts/Measure.ps1`, which runs the editor in its
+the run taken once each change was in, the frame figures from `LogOutput/Measurement_2026-10-25_15-57-58`,
+taken once the readback was gone, and the second pass's from `LogOutput/Measurement_2026-10-25_16-42-31`.
+All with `pwsh -File ./Scripts/Measure.ps1`, which runs the editor in its
 measurement mode on a Win32 desktop of its own and times its own objects: the real renderer, the real canvas
 control, the real session and the real panels. Figures are medians in milliseconds over the run count the
 report states. Re-run the script to refresh them; the raw samples sit beside each report in `Measurement.json`.
@@ -43,15 +44,25 @@ about 8.4 ms before it misses one.
 
 What that adds up to, for the things a person waits on, on a 2000 x 1000 canvas:
 
-| Interaction                      |   Before |   After |
-| -------------------------------- | -------: | ------: |
-| Paint one cell                   | 18.45 ms | 0.15 ms |
-| Drag the brush over 60 cells     | 18.33 ms | 0.36 ms |
-| Pan the canvas                   |  8.31 ms | 0.07 ms |
-| Undo a whole-canvas change       | 29.53 ms | 11.9 ms |
-| Hide or show a layer             | 29.79 ms | 11.9 ms |
-| A frame with everything selected |  2646 ms | 0.08 ms |
-| A frame while painting, at 4K    | 32.99 ms | 0.18 ms |
+| Interaction                      |   Before |    After | Second pass |
+| -------------------------------- | -------: | -------: | ----------: |
+| Paint one cell                   | 18.45 ms |  0.15 ms |     0.20 ms |
+| Drag the brush over 60 cells     | 18.33 ms |  0.36 ms |     0.42 ms |
+| Pan the canvas                   |  8.31 ms |  0.07 ms |     0.10 ms |
+| Undo one brush stroke            |        - | ~12.5 ms |     0.72 ms |
+| Rename a layer                   |        - | ~12.5 ms |     0.63 ms |
+| Undo a whole-canvas change       | 29.53 ms |  11.9 ms |    15.18 ms |
+| Hide or show a layer             | 29.79 ms |  11.9 ms |     8.80 ms |
+| A frame with everything selected |  2646 ms |  0.08 ms |     0.11 ms |
+| A frame while painting, at 4K    | 32.99 ms |  0.18 ms |     0.18 ms |
+
+Two rows need a word. "Undo a whole-canvas change" measured, until the second pass, an undo of a flood fill
+from the corner of a canvas whose cells all differ from their neighbours: a fill of one cell, so the 11.9 ms
+was the cost of reporting a one-cell undo as a change to everything, which is the first thing the second
+pass removed. The row now clears every cell on the layer and undoes that, two million edits, which is
+15.18 ms: 6.4 ms to put the cells back and 8.8 ms for the frame that recomposites and re-uploads them all.
+And the two new rows did not exist before; their "after" figure is what undoing one stroke or renaming a
+layer cost then, which was the same whole-canvas rebuild as hiding a layer.
 
 ## The readback, and how it went
 
@@ -106,10 +117,75 @@ offscreen surface had a top-left one, and Skia plumbs a pixel's coordinates into
 the two, which the driver then rounds differently at a `step` threshold. The offscreen surface now has the
 framebuffer's origin, and the check is exact.
 
-**The whole-canvas editing operations are now the slowest things here**: flood fill 57 ms, move a
-selection over the canvas 47 ms, clear every cell 24 ms, rotate 32 ms. All of them run on the thread handling
-input, with no feedback while they do. What is left in them is the per-cell work itself rather than anything
-around it.
+**The whole-canvas editing operations are now the slowest things here**: flood fill 40 ms, move a
+selection over the canvas 37 ms, rotate 31 ms, clear every cell 20 ms, copy everything 11 ms. All of them
+run on the thread handling input, with no feedback while they do. What is left in them is the per-cell work
+itself rather than anything around it.
+
+## A second pass, with the machine free
+
+Done with nobody at the machine and every display allowed, which made two things possible for the first
+time: the real editor under the real pointer and keyboard, and figures for what the window does rather than
+only for what the editor does. Four things came out of it, in the order they mattered.
+
+**Undoing one brush stroke rebuilt the whole canvas.** Every undo and redo, and every structural change,
+reported itself as a change to everything, and the window answered a change to everything by throwing away
+its composited raster: two million cells recomposited and sixteen megabytes re-uploaded to undo a dab, or
+to rename a layer, or to choose one in the layer list. `EditorChange` now carries an `Artwork` flag that
+means "how the cells look changed without the cells changing", set by the changes that do that -- a layer
+hidden, reordered or made see-through, a new background, a layer deleted -- and by nothing else, and each
+history record reports what applying it touches. Undoing one stroke went from the rebuild to a 0.19 ms
+frame; renaming a layer from the rebuild to 0.15 ms.
+
+**The frame under a real hand.** With the editor on the 120 Hz display and the physical pointer dragged in
+a circle, reporting a thousand positions a second, the canvas drew 370 frames a second: the median gap
+between frames was 2.9 ms, the longest 6 to 12 ms, and the display showed one frame in three. WPF runs an
+invalidated element's render pass as soon as the dispatcher is free, which under that pointer is after every
+message. So the display is never waiting on the editor, and the question that started this -- whether the
+window holds the display's rate while painting -- is answered: it draws three times that rate, every frame
+costing 0.1 to 0.2 ms of GPU work, and the compositor picks the newest. The cost is that the thread handling
+input is never idle during a stroke.
+
+A throttle was tried and rejected. Asking for frames from `CompositionTarget.Rendering` and taking one per
+reported frame time gave 200 frames a second but holes of 26 to 36 ms where there had been none, which is a
+stutter a person can see; and the event itself turns out to fire after every render here rather than once a
+refresh, so without the frame-time check it was 370 a second again. WPF offers no tick that is the
+display's, and the plain invalidation gives the smoothest result, so that is what stays. The figures come
+from `--log-frames`, which makes the editor write how many frames it drew, and how far apart, every two
+seconds while frames are being drawn; `Run.ps1 -EditorArguments --log-frames` starts it that way.
+
+**Compositing was five times slower than its own arithmetic.** Compositing every cell of the large canvas
+measured 52 ms where the earlier pass had recorded 11 ms, on an idle machine, with the same code. With
+tiered compilation switched off it measured 10 ms, so the optimised tier was producing code five times
+slower than the one-shot optimiser for this loop; with quick JIT for loops switched off it was fast too, but
+the editing operations, which the dynamic profile serves well, slowed by a third; with the tiering delay
+removed nothing changed. Rather than a runtime switch that trades one hot path for another, `CompositeAt`
+is now a counted loop with the blend in a static function instead of a foreach with the blend in a closure,
+the same arithmetic term for term, and it measures 5.2 ms under the default tiering: faster than either
+setting. The whole-canvas recomposite that follows a hidden layer went from 5.3 ms to 3.3 ms with it.
+
+| Compositing every cell, 2000 x 1000, 3 layers | Default tiering | Tiering off | Quick JIT for loops off |
+| --------------------------------------------- | --------------: | ----------: | ----------------------: |
+| Before, as a foreach and a closure            |           52 ms |       10 ms |                   12 ms |
+| After, as a counted loop and a static blend   |          5.2 ms |           - |                       - |
+
+**The raster was copied before every upload.** `SKImage.FromBitmap` copies the pixels it is given, and the
+whole-canvas upload that follows a hidden layer gave it sixteen megabytes: 4.6 ms of copying before the
+upload began. The image is now made over the raster's own pixels, flushed before the next recomposite can
+write them. Hiding or showing a layer went from 14.5 ms to 8.8 ms, of which 3.3 ms is the recomposite and
+most of the rest the upload itself.
+
+Smaller: the flood fill finds a cell's six neighbours in columns and rows from the parity of its line,
+rather than through axial coordinates and back six times a cell, 54 ms to 40 ms over the whole canvas; the
+status line is only set when the hovered cell changes rather than on every pointer position; and a project
+whose layers would exceed the cell budget is refused on loading with the budget's own words rather than
+allocated past it.
+
+What the pass checked itself against, beyond `Validate.ps1`: the real editor on the primary display under
+`SendInput`, with captures after each stage -- a pencil stroke, an eraser stroke at a larger brush, undo,
+undo and redo, wheel zoom, a middle-button pan, the grid toggled, fit, and a right-button erase -- and the
+editor closed through Alt+F4 and the unsaved-changes prompt. The captures are under `LogOutput`, which is
+not kept in the repository.
 
 ## Two cautions the hard way
 
