@@ -168,8 +168,12 @@ public sealed class EditorSession
         var (columnB, rowB) = HexGeometry.ToOffset(end, Document.Orientation);
         Selection.Clear();
         selectionPivot = null;
-        for (var row = Math.Max(0, Math.Min(rowA, rowB)); row <= Math.Min(Document.Height - 1, Math.Max(rowA, rowB)); row++)
-            for (var column = Math.Max(0, Math.Min(columnA, columnB)); column <= Math.Min(Document.Width - 1, Math.Max(columnA, columnB)); column++) Selection.Add(row * Document.Width + column);
+        var left = Math.Max(0, Math.Min(columnA, columnB));
+        var right = Math.Min(Document.Width - 1, Math.Max(columnA, columnB));
+        var top = Math.Max(0, Math.Min(rowA, rowB));
+        var bottom = Math.Min(Document.Height - 1, Math.Max(rowA, rowB));
+        for (var row = top; row <= bottom; row++)
+            for (var column = left; column <= right; column++) Selection.Add(row * Document.Width + column);
         Notify(EditorChange.Selection);
     }
 
@@ -210,18 +214,7 @@ public sealed class EditorSession
         BeginStroke(captureSelection: true);
         Selection.Clear();
         selectionPivot = null;
-        foreach (var cell in clipboard.Cells)
-        {
-            var x = column + cell.Column;
-            var y = row + cell.Row;
-            if (x >= 0 && x < Document.Width && y >= 0 && y < Document.Height) SetPixel(y * Document.Width + x, cell.Color);
-        }
-        foreach (var cell in clipboard.Cells)
-        {
-            var x = column + cell.Column;
-            var y = row + cell.Row;
-            if (x >= 0 && x < Document.Width && y >= 0 && y < Document.Height) Selection.Add(y * Document.Width + x);
-        }
+        PaintThenSelect(CellsLandingAt(clipboard, column, row));
         EndStroke("Paste");
         Notify(EditorChange.Pixels | EditorChange.Selection);
     }
@@ -237,20 +230,27 @@ public sealed class EditorSession
         foreach (var index in Selection) SetPixel(index, 0);
         Selection.Clear();
         selectionPivot = null;
-        foreach (var cell in clipboard.Cells)
-        {
-            var x = left + columns + cell.Column;
-            var y = top + rows + cell.Row;
-            if (x >= 0 && x < Document.Width && y >= 0 && y < Document.Height) SetPixel(y * Document.Width + x, cell.Color);
-        }
-        foreach (var cell in clipboard.Cells)
-        {
-            var x = left + columns + cell.Column;
-            var y = top + rows + cell.Row;
-            if (x >= 0 && x < Document.Width && y >= 0 && y < Document.Height) Selection.Add(y * Document.Width + x);
-        }
+        PaintThenSelect(CellsLandingAt(clipboard, left + columns, top + rows));
         EndStroke("Move selection");
         Notify(EditorChange.Pixels | EditorChange.Selection);
+    }
+
+    // Where a clipboard's cells land with its top left corner at this column and row, dropping whatever
+    // would fall outside the canvas.
+    private (int Index, uint Color)[] CellsLandingAt(CellClipboard clipboard, int column, int row) =>
+        clipboard.Cells
+            .Select(cell => (Column: column + cell.Column, Row: row + cell.Row, cell.Color))
+            .Where(cell => cell.Column >= 0 && cell.Column < Document.Width && cell.Row >= 0 && cell.Row < Document.Height)
+            .Select(cell => (cell.Row * Document.Width + cell.Column, cell.Color))
+            .ToArray();
+
+    // Paints the cells, then selects them, and never in one pass: SetPixel refuses a cell outside a
+    // selection that holds anything, so a selection grown as the painting went along would turn away every
+    // cell it did not hold yet and the paste would come out as its first cell alone.
+    private void PaintThenSelect((int Index, uint Color)[] cells)
+    {
+        foreach (var (index, color) in cells) SetPixel(index, color);
+        foreach (var (index, _) in cells) Selection.Add(index);
     }
 
     public void AddLayer()
