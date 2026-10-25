@@ -92,6 +92,9 @@ public sealed class GpuHexRenderer : IDisposable
         return shared;
     }
 
+    /// <summary>Why there is no renderer, once <see cref="Shared"/> has returned null.</summary>
+    public static string? Unavailable { get; private set; }
+
     /// <summary>Releases the process's renderer. For application shutdown.</summary>
     public static void DisposeShared()
     {
@@ -103,15 +106,16 @@ public sealed class GpuHexRenderer : IDisposable
     {
         var renderer = new GpuHexRenderer();
         renderer.thread.Start();
-        // Creating the context is the slow part. A machine without a GPU usually fails quickly;
-        // one that hangs here falls back rather than holding the editor up behind it.
+        // Creating the context is the slow part. A machine without a GPU usually fails quickly; one that
+        // hangs here is given up on rather than left to hold the editor behind it.
         if (!renderer.ready.Wait(TimeSpan.FromSeconds(10)))
         {
-            log?.Invoke("GPU renderer timed out starting up.");
+            Unavailable = "The GPU renderer timed out starting up.";
+            log?.Invoke(Unavailable);
             renderer.running = false;
             return null;
         }
-        if (renderer.startupFailure != null) { log?.Invoke(renderer.startupFailure); return null; }
+        if (renderer.startupFailure != null) { Unavailable = renderer.startupFailure; log?.Invoke(Unavailable); return null; }
         log?.Invoke("GPU renderer ready.");
         return renderer;
     }

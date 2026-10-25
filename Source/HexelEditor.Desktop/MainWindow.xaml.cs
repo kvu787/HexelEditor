@@ -472,19 +472,27 @@ public partial class MainWindow : Window
     }
 
     // Draws a document the way the canvas draws it, one pixel per unit of artwork space, so a check can
-    // sample what a cell actually put on screen. At this size a cell is twenty pixels across, which is the
-    // exact-outline tier, and no raster cache is passed, so this is the path that decides what the editor
-    // shows at the zooms artwork is drawn at. The pixel of margin keeps the outermost cells off the edge.
+    // sample what a cell actually put on screen. The pixel of margin keeps the outermost cells off the edge.
     private static SkiaSharp.SKBitmap RenderArtwork(HexDocument document, out SkiaSharp.SKRect bounds)
     {
         bounds = ArtworkRenderer.Bounds(document);
-        using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo((int)Math.Ceiling(bounds.Width) + 2, (int)Math.Ceiling(bounds.Height) + 2))
-            ?? throw new InvalidOperationException("Could not create the artwork verification image.");
-        surface.Canvas.Clear(SkiaSharp.SKColors.Transparent);
-        surface.Canvas.Translate(1 - bounds.Left, 1 - bounds.Top);
-        ArtworkRenderer.Draw(surface.Canvas, document);
-        using var image = surface.Snapshot();
-        return SkiaSharp.SKBitmap.FromImage(image);
+        using var cache = new ArtworkCache();
+        return RenderFrame(document, cache, (int)Math.Ceiling(bounds.Width) + 2, (int)Math.Ceiling(bounds.Height) + 2,
+            zoom: 1, offsetX: 1 - bounds.Left, offsetY: 1 - bounds.Top);
+    }
+
+    // One frame from the editor's own renderer, as a bitmap the caller owns. This is the point of these
+    // checks: the shader is the only thing that draws the canvas, so a check that drew the artwork any other
+    // way would be verifying something nobody sees. The renderer hands back the buffer it reads every frame
+    // into and goes on using it, so what a check keeps has to be a copy.
+    private static SkiaSharp.SKBitmap RenderFrame(HexDocument document, ArtworkCache cache, int width, int height,
+        float zoom, float offsetX, float offsetY)
+    {
+        var renderer = GpuHexRenderer.Shared(App.Log.Write)
+            ?? throw new InvalidOperationException("There is no GPU renderer: " + GpuHexRenderer.Unavailable);
+        var frame = renderer.Render(document, cache, width, height, zoom, offsetX, offsetY, grid: false)
+            ?? throw new InvalidOperationException("The GPU renderer produced no frame.");
+        return frame.Copy() ?? throw new InvalidOperationException("Could not copy the rendered frame.");
     }
 
     // Every cell's composited color has to land at that cell's own center. This runs on the reloaded example,
@@ -508,10 +516,12 @@ public partial class MainWindow : Window
     // first cell. The background is one solid color rather than a pattern, so the cell holding no artwork
     // samples the background and every other cell samples its own color. And between two opaque neighbors
     // none of the background may show at all: a hairline there is what makes a canvas read as a grid when no
-    // grid is drawn, and the overlap the cells are drawn with is what keeps it out.
+    // grid is drawn. The shader gives every pixel of the canvas the colour of whichever cell its centre
+    // lands in, so the midpoint of two neighbours belongs to one of the two and there is no third thing it
+    // could be; this holds the renderer to that.
     //
-    // Both orientations, because the two lay their rows out along different axes and only one of them is what
-    // a new canvas starts as.
+    // Both orientations, because the two lay their rows out along different axes, the shader takes a
+    // different branch for each, and only one of them is what a new canvas starts as.
     private static int VerifyCanvasSurface()
     {
         const uint background = 0xFF336699;
@@ -780,11 +790,12 @@ public partial class MainWindow : Window
             $"Keyboard input: {tools.Length} tool keys, brush and grid keys, Space held and released, Ctrl+A, Ctrl+D, Ctrl+Z and Ctrl+Shift+Z verified through real key messages with the modifiers really held\n");
     }
 
-    // The three ways the canvas draws cells, each checked where it is actually used. A large canvas is drawn
-    // at the zoom it is drawn at, and a cell's colour has to land where that cell is: the raster has its own
-    // mapping back to the artwork's coordinates and the mesh has its own corner arithmetic, so either could
-    // put the artwork in the wrong place without anything else noticing.
-    public void VerifyRenderTiers(string folder)
+    // The renderer at the sizes a cell is really drawn at, from a canvas far larger than the window to one
+    // zoomed well in. A cell's colour has to land where that cell is, and two separate pieces of arithmetic
+    // decide that: the shader's own inversion of the hex layout, and the raster's two texels a cell with the
+    // half-cell offset of alternate lines. Either could put the artwork in the wrong place without anything
+    // else noticing, and neither is exercised anywhere else.
+    public void VerifyRenderScales(string folder)
     {
         const int width = 400, height = 200;
         var document = new HexDocument(width, height);
@@ -801,44 +812,30 @@ public partial class MainWindow : Window
         foreach (var cellPixels in new[] { 1.5f, 5f, 10f, 20f })
         {
             var zoom = cellPixels / (float)(Math.Sqrt(3) * ArtworkRenderer.CellRadius);
-            var detail = ArtworkRenderer.DetailFor(cellPixels, true);
             // A point a quarter and three quarters of the way along each axis sits well inside one quadrant,
-            // far enough from a boundary that filtering cannot carry a neighbour's colour into it. The view is
-            // placed to put that cell at the middle of the surface, so this works at any zoom, including the
-            // ones where the canvas is far larger than the window, which is the case that matters.
+            // a hundred cells from any boundary. The view is placed to put that cell at the middle of the
+            // frame, so this works at any zoom, including the ones where the canvas is far larger than the
+            // window, which is the case that matters.
             for (var quadrant = 0; quadrant < 4; quadrant++)
             {
                 var column = quadrant % 2 == 0 ? width / 4 : width * 3 / 4;
                 var row = quadrant < 2 ? height / 4 : height * 3 / 4;
                 var (x, y) = HexGeometry.Center(HexGeometry.FromOffset(column, row, document.Orientation), document.Orientation, ArtworkRenderer.CellRadius);
-                using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo(side, side))
-                    ?? throw new InvalidOperationException("Could not create the render tier surface.");
-                surface.Canvas.Clear(SkiaSharp.SKColors.White);
-                surface.Canvas.Translate(side / 2f - (float)x * zoom, side / 2f - (float)y * zoom);
-                surface.Canvas.Scale(zoom);
-                ArtworkRenderer.Draw(surface.Canvas, document, grid: false, zoom: zoom, cache: cache);
-                using var image = surface.Snapshot();
-                using var bitmap = SkiaSharp.SKBitmap.FromImage(image);
+                using var bitmap = RenderFrame(document, cache, side, side, zoom,
+                    side / 2f - (float)x * zoom, side / 2f - (float)y * zoom);
                 var sample = (uint)bitmap.GetPixel(side / 2, side / 2);
                 var expected = quadrants[quadrant];
-                if (!CloseEnough(sample, expected))
+                // One sample a pixel, and the colour is fetched from a texel rather than computed, so the
+                // pixel holds one cell's colour exactly instead of a blend of several. Nothing here needs a
+                // tolerance, and not having one is what makes a half-cell error a failure.
+                if (sample != expected)
                     throw new InvalidOperationException(
-                        $"Drawing at {detail} detail, {cellPixels} pixels a cell, put {ColorMath.Format(sample)} at cell {column},{row} where {ColorMath.Format(expected)} belongs.");
+                        $"Drawing at {cellPixels} pixels a cell put {ColorMath.Format(sample)} at cell {column},{row} where {ColorMath.Format(expected)} belongs.");
             }
-            checks.Add($"{detail} at {cellPixels:0.#} px");
+            checks.Add($"{cellPixels:0.#} px");
         }
         File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
-            $"Render tiers: {string.Join(", ", checks)} verified on a {width} x {height} canvas\n");
-    }
-
-    // Filtering and the raster's two pixels a cell both move a colour slightly, so the check is on being the
-    // right colour rather than the exact bytes. A wrong quadrant is nowhere near.
-    private static bool CloseEnough(uint sample, uint expected)
-    {
-        int Channel(uint color, int shift) => (int)((color >> shift) & 255);
-        return Math.Abs(Channel(sample, 16) - Channel(expected, 16)) <= 24
-            && Math.Abs(Channel(sample, 8) - Channel(expected, 8)) <= 24
-            && Math.Abs(Channel(sample, 0) - Channel(expected, 0)) <= 24;
+            $"Render scales: {string.Join(", ", checks)} a cell verified on a {width} x {height} canvas\n");
     }
 
     public void VerifyInterface(string folder)

@@ -75,7 +75,7 @@ $expected = @(
     'Canvas surface:',
     'Menu bar and dialogs: passed',
     'Palette grid:',
-    'Render tiers:',
+    'Render scales:',
     'Pointer input:',
     'Keyboard input:'
 )

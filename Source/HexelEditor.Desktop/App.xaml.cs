@@ -107,7 +107,7 @@ public partial class App : Application
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
             window.VerifyInterface(folder);
             window.VerifyPalette(folder);
-            window.VerifyRenderTiers(folder);
+            window.VerifyRenderScales(folder);
             // These two go last, because they drive the pointer and the keyboard for real: they take mouse
             // capture, take the keyboard focus, and attach sessions of their own that no earlier check should
             // be looking at.
