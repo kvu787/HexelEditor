@@ -1622,3 +1622,11 @@ isolated. It is the right design regardless, and three consecutive validation ru
 170 distinct colours against 123 on the CPU path, which is the antialiasing showing up in the
 capture. The session log confirms "GPU renderer ready" in both the hidden host and the real window,
 so the path being validated is the real one.
+
+## User
+
+Leave them local for now.
+
+## Assistant
+
+Left local. Nothing pushed; the three commits sit on `main`.
