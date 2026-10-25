@@ -102,6 +102,12 @@ public sealed class HexCanvas : GLWpfControl
     public PaintTimings LastPaintTimings { get; private set; }
 
     /// <summary>
+    /// Told about every frame the element draws into its own framebuffer, when set. For finding out how many
+    /// frames a second the window really draws under a real hand, which nothing offscreen can say.
+    /// </summary>
+    public static FrameCadenceLog? FrameLog { get; set; }
+
+    /// <summary>
     /// What the overlays were culled against on the last measured paint, and how many cells they therefore
     /// walked. Both are here because the figure for the overlays is only meaningful next to the amount of
     /// canvas they covered, and that is decided by the surface's clip rather than by anything visible.
@@ -205,6 +211,7 @@ public sealed class HexCanvas : GLWpfControl
         }
         CanvasSize = new SKSize(width, height);
         Paint(frame, width, height);
+        FrameLog?.Record();
         if (compareNextFrame)
         {
             compareNextFrame = false;
@@ -441,9 +448,15 @@ public sealed class HexCanvas : GLWpfControl
         {
             offsetX += (float)(point.X - panPoint.X); offsetY += (float)(point.Y - panPoint.Y); panPoint = point; InvalidateVisual(); return;
         }
+        var was = hover;
         hover = Coordinate(point);
-        var (column, row) = HexGeometry.ToOffset(hover.Value, session.Document.Orientation);
-        StatusChanged?.Invoke(session.Document.IndexOf(hover.Value) >= 0 ? $"Cell {column}, {row}    |    Axial {hover.Value.Q}, {hover.Value.R}" : "Outside canvas    |    Space + drag to pan");
+        // The status line names the cell, so it only has something new to say when the cell changed. A mouse
+        // reports many positions inside one cell, and each line set was a layout pass for the status bar.
+        if (hover != was)
+        {
+            var (column, row) = HexGeometry.ToOffset(hover.Value, session.Document.Orientation);
+            StatusChanged?.Invoke(session.Document.IndexOf(hover.Value) >= 0 ? $"Cell {column}, {row}    |    Axial {hover.Value.Q}, {hover.Value.R}" : "Outside canvas    |    Space + drag to pan");
+        }
         if (drawing && previous.HasValue)
         {
             if (Tool is DrawingTool.Pencil or DrawingTool.Eraser)

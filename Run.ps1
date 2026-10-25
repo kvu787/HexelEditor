@@ -4,7 +4,10 @@ param(
     [string] $Display,
     # Returns the started process instead of describing the launch, so that a validation run can follow and
     # capture exactly the editor it started rather than whichever one happens to be open.
-    [switch] $PassThru
+    [switch] $PassThru,
+    # Further arguments for the editor, passed through as they are. For the switches a run that studies the
+    # editor wants, such as --log-frames, which writes how many frames a second the window really draws.
+    [string[]] $EditorArguments = @()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -29,6 +32,7 @@ if ($Project) {
     $projectFile = (Resolve-Path -LiteralPath $Project).Path
     $arguments += '"' + $projectFile + '"'
 }
+$arguments += $EditorArguments
 if ($arguments.Count -gt 0) { $startParameters.ArgumentList = $arguments -join ' ' }
 $process = Start-Process @startParameters -PassThru
 if ($PassThru) { return $process }

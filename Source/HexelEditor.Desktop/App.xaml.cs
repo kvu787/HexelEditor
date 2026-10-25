@@ -189,6 +189,14 @@ public partial class App : Application
             Environment.Exit(0);
             return;
         }
+        if (Array.IndexOf(e.Args, LogFramesOption) >= 0)
+        {
+            // How many frames the window really draws, written to the session log while frames are being
+            // drawn. For measuring the editor under a real hand on a real display, where nothing offscreen
+            // can stand in.
+            HexCanvas.FrameLog = new FrameCadenceLog(Log.Write);
+            Log.Write("Frame cadence logging is on.");
+        }
         if (placement is { } bounds)
         {
             // Placing the window from SourceInitialized puts it on the wanted display before its first frame,
@@ -230,6 +238,7 @@ public partial class App : Application
     }
 
     private const string ShowWithoutFocusOption = "--show-without-focus";
+    private const string LogFramesOption = "--log-frames";
     private const string MeasureOutputOption = "--measure-output";
     private const uint NoZOrder = 0x0004, NoActivate = 0x0010, NoOwnerZOrder = 0x0200;
     private const int ExtendedStyle = -20;
