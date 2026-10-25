@@ -68,7 +68,7 @@ public sealed class HexCanvas : SKElement
     public void Fit()
     {
         if (session == null || ActualWidth <= 0 || ActualHeight <= 0) return;
-        var bounds = ArtworkRenderer.Bounds(session.Document);
+        var bounds = CanvasGeometry.Bounds(session.Document);
         Zoom = Math.Clamp((float)Math.Min((ActualWidth - 100) / bounds.Width, (ActualHeight - 90) / bounds.Height), MinimumZoom, MaximumZoom);
         offsetX = ((float)ActualWidth - bounds.Width * Zoom) / 2 - bounds.Left * Zoom;
         offsetY = ((float)ActualHeight - bounds.Height * Zoom) / 2 - bounds.Top * Zoom;
@@ -84,13 +84,13 @@ public sealed class HexCanvas : SKElement
         Zoom = next; InvalidateVisual(); ZoomChanged?.Invoke();
     }
 
-    private HexCoordinate Coordinate(Point point) => HexGeometry.FromPoint((point.X - offsetX) / Zoom, (point.Y - offsetY) / Zoom, session!.Document.Orientation, ArtworkRenderer.CellRadius);
+    private HexCoordinate Coordinate(Point point) => HexGeometry.FromPoint((point.X - offsetX) / Zoom, (point.Y - offsetY) / Zoom, session!.Document.Orientation, CanvasGeometry.CellRadius);
 
     // The inverse of Coordinate: where a cell's center sits in this canvas's own coordinates. Validation aims
     // real pointer input at a cell with it, so the pan and zoom it reads are the ones the pointer handlers use.
     public Point PointOf(HexCoordinate coordinate)
     {
-        var (x, y) = HexGeometry.Center(coordinate, session!.Document.Orientation, ArtworkRenderer.CellRadius);
+        var (x, y) = HexGeometry.Center(coordinate, session!.Document.Orientation, CanvasGeometry.CellRadius);
         return new Point(x * Zoom + offsetX, y * Zoom + offsetY);
     }
 
@@ -128,7 +128,7 @@ public sealed class HexCanvas : SKElement
 
         canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
-        using var path = ArtworkRenderer.Hexagon(session.Document.Orientation, ArtworkRenderer.CellRadius * 0.96f);
+        using var path = CanvasGeometry.Hexagon(session.Document.Orientation, CanvasGeometry.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
         using var fill = new SKPaint { IsAntialias = true, Color = new SKColor(0, 95, 184, 40) };
         // The cursor ring carries a light halo so that it stays visible over both pale and dark artwork.
@@ -137,15 +137,15 @@ public sealed class HexCanvas : SKElement
         void Highlight(HexCoordinate coordinate, bool filled, bool cursor = false)
         {
             if (session.Document.IndexOf(coordinate) < 0) return;
-            var (x, y) = HexGeometry.Center(coordinate, session.Document.Orientation, ArtworkRenderer.CellRadius);
+            var (x, y) = HexGeometry.Center(coordinate, session.Document.Orientation, CanvasGeometry.CellRadius);
             // A whole-canvas selection is mostly off screen once zoomed in, so the artwork's culling applies here too.
-            if (!ArtworkRenderer.IsVisible(visible, x, y)) return;
+            if (!CanvasGeometry.IsVisible(visible, x, y)) return;
             canvas.Save(); canvas.Translate((float)x, (float)y);
             if (filled) canvas.DrawPath(path, fill);
             if (cursor) canvas.DrawPath(path, halo);
             canvas.DrawPath(path, outline); canvas.Restore();
         }
-        var (minColumn, minRow, maxColumn, maxRow) = ArtworkRenderer.VisibleCells(session.Document, visible);
+        var (minColumn, minRow, maxColumn, maxRow) = CanvasGeometry.VisibleCells(session.Document, visible);
         if (session.Selection.Count > 0)
             for (var row = minRow; row <= maxRow; row++)
                 for (var column = minColumn; column <= maxColumn; column++)

@@ -3,12 +3,13 @@ using SkiaSharp;
 
 namespace HexelEditor.Desktop;
 
-// Where a cell sits, how large it is, and which cells a viewport can reach.
+// Where a cell sits on the canvas, how large it is, and which cells a viewport can reach: the axial
+// arithmetic of HexGeometry in the canvas's own units, in Skia's types.
 //
-// The artwork itself is drawn by GpuHexRenderer, which works all of this out per pixel in a shader instead.
-// What is left here is what the things drawn over the artwork need -- the selection, the shape previews and
-// the cursor ring, which are still Skia paths on the CPU -- along with the bounds the view is fitted to.
-public static class ArtworkRenderer
+// The artwork is drawn by GpuHexRenderer, which does all of this per pixel in a shader instead. What is
+// here serves the things drawn over the artwork -- the selection, the shape previews and the cursor ring,
+// which are still Skia paths on the CPU -- and the bounds the view is fitted to.
+public static class CanvasGeometry
 {
     public const float CellRadius = 12;
 

@@ -75,7 +75,7 @@ public sealed class ArtworkCache : IDisposable
     // Where the raster's pixels sit in the artwork's own coordinates, so it can be drawn with one scaled blit.
     // A cell spans a whole pitch across and a whole row pitch down, which is the band a row occupies rather
     // than the full height of a hexagon: neighbouring rows interlock, and the bands are what tile the plane.
-    public SKRect DestinationFor(HexDocument document, float radius = ArtworkRenderer.CellRadius)
+    public SKRect DestinationFor(HexDocument document, float radius = CanvasGeometry.CellRadius)
     {
         var (across, down) = Pitches(document.Orientation, radius);
         return document.Orientation == HexOrientation.PointyTop

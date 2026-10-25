@@ -475,7 +475,7 @@ public partial class MainWindow : Window
     // sample what a cell actually put on screen. The pixel of margin keeps the outermost cells off the edge.
     private static SkiaSharp.SKBitmap RenderArtwork(HexDocument document, out SkiaSharp.SKRect bounds)
     {
-        bounds = ArtworkRenderer.Bounds(document);
+        bounds = CanvasGeometry.Bounds(document);
         using var cache = new ArtworkCache();
         return RenderFrame(document, cache, (int)Math.Ceiling(bounds.Width) + 2, (int)Math.Ceiling(bounds.Height) + 2,
             zoom: 1, offsetX: 1 - bounds.Left, offsetY: 1 - bounds.Top);
@@ -502,7 +502,7 @@ public partial class MainWindow : Window
         using var bitmap = RenderArtwork(document, out var bounds);
         for (var index = 0; index < document.CellCount; index++)
         {
-            var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, ArtworkRenderer.CellRadius);
+            var (x, y) = HexGeometry.Center(document.CoordinateAt(index), document.Orientation, CanvasGeometry.CellRadius);
             var sample = (uint)bitmap.GetPixel((int)Math.Round(x + 1 - bounds.Left), (int)Math.Round(y + 1 - bounds.Top));
             var expected = ColorMath.Over(document.CompositeAt(index), document.BackgroundColor);
             if (sample != expected)
@@ -536,7 +536,7 @@ public partial class MainWindow : Window
             for (var index = 0; index < document.CellCount; index++)
             {
                 var coordinate = document.CoordinateAt(index);
-                var (x, y) = HexGeometry.Center(coordinate, orientation, ArtworkRenderer.CellRadius);
+                var (x, y) = HexGeometry.Center(coordinate, orientation, CanvasGeometry.CellRadius);
                 var expected = index == 0 ? background : artwork;
                 var sample = Sample(x, y);
                 if (sample != expected)
@@ -547,7 +547,7 @@ public partial class MainWindow : Window
                     // Cell zero holds no artwork, so it is not one of the opaque pairs this looks between.
                     var neighbor = document.IndexOf(coordinate + direction);
                     if (neighbor <= 0) continue;
-                    var (neighborX, neighborY) = HexGeometry.Center(coordinate + direction, orientation, ArtworkRenderer.CellRadius);
+                    var (neighborX, neighborY) = HexGeometry.Center(coordinate + direction, orientation, CanvasGeometry.CellRadius);
                     var between = Sample((x + neighborX) / 2, (y + neighborY) / 2);
                     if (between != artwork)
                         throw new InvalidDataException($"{ColorMath.Format(between)} shows between {orientation} cells {index} and {neighbor}.");
@@ -810,7 +810,7 @@ public partial class MainWindow : Window
         const int side = 600;
         foreach (var cellPixels in new[] { 1.5f, 5f, 10f, 20f })
         {
-            var zoom = cellPixels / (float)(Math.Sqrt(3) * ArtworkRenderer.CellRadius);
+            var zoom = cellPixels / (float)(Math.Sqrt(3) * CanvasGeometry.CellRadius);
             // A point a quarter and three quarters of the way along each axis sits well inside one quadrant,
             // a hundred cells from any boundary. The view is placed to put that cell at the middle of the
             // frame, so this works at any zoom, including the ones where the canvas is far larger than the
@@ -819,7 +819,7 @@ public partial class MainWindow : Window
             {
                 var column = quadrant % 2 == 0 ? width / 4 : width * 3 / 4;
                 var row = quadrant < 2 ? height / 4 : height * 3 / 4;
-                var (x, y) = HexGeometry.Center(HexGeometry.FromOffset(column, row, document.Orientation), document.Orientation, ArtworkRenderer.CellRadius);
+                var (x, y) = HexGeometry.Center(HexGeometry.FromOffset(column, row, document.Orientation), document.Orientation, CanvasGeometry.CellRadius);
                 using var bitmap = RenderFrame(document, cache, side, side, zoom,
                     side / 2f - (float)x * zoom, side / 2f - (float)y * zoom);
                 var sample = (uint)bitmap.GetPixel(side / 2, side / 2);

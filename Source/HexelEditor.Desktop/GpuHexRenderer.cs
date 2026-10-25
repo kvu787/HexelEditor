@@ -230,7 +230,7 @@ public sealed class GpuHexRenderer : IDisposable
                 colourVersion = cache.Version;
             }
 
-            var cellPixels = (float)(Math.Sqrt(3) * ArtworkRenderer.CellRadius * zoom);
+            var cellPixels = (float)(Math.Sqrt(3) * CanvasGeometry.CellRadius * zoom);
             var pointyTop = document.Orientation == HexOrientation.PointyTop;
             using var child = colours.ToShader(SKShaderTileMode.Decal, SKShaderTileMode.Decal,
                 new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
@@ -239,7 +239,7 @@ public sealed class GpuHexRenderer : IDisposable
                 { "invScale", new[] { 1f / zoom, 1f / zoom } },
                 { "pan", new[] { offsetX, offsetY } },
                 { "grid", new[] { (float)document.Width, (float)document.Height } },
-                { "radius", ArtworkRenderer.CellRadius },
+                { "radius", CanvasGeometry.CellRadius },
                 { "pointy", pointyTop ? 1f : 0f },
                 // The grid is drawn analytically from the distance to the nearest cell edge, which
                 // is exact at every zoom and costs nothing per cell. Below a few pixels a cell it
