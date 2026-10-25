@@ -36,25 +36,21 @@ internal static class PointerInput
         // A press is preceded by a move to the same point, as it would be in use, so that the pointer is over
         // the element before the button goes down rather than arriving with it.
         Send(element, point, MouseMove, null);
-        Send(element, point, button switch
-        {
-            MouseButton.Left => LeftDown,
-            MouseButton.Right => RightDown,
-            MouseButton.Middle => MiddleDown,
-            _ => throw new ArgumentOutOfRangeException(nameof(button), button, "Only the left, right and middle buttons are driven.")
-        }, button);
+        Send(element, point, ButtonMessage(button, down: true), button);
     }
 
     public static void Release(Visual element, Point point, MouseButton button)
     {
-        Send(element, point, button switch
-        {
-            MouseButton.Left => LeftUp,
-            MouseButton.Right => RightUp,
-            MouseButton.Middle => MiddleUp,
-            _ => throw new ArgumentOutOfRangeException(nameof(button), button, "Only the left, right and middle buttons are driven.")
-        }, null);
+        Send(element, point, ButtonMessage(button, down: false), null);
     }
+
+    private static int ButtonMessage(MouseButton button, bool down) => button switch
+    {
+        MouseButton.Left => down ? LeftDown : LeftUp,
+        MouseButton.Right => down ? RightDown : RightUp,
+        MouseButton.Middle => down ? MiddleDown : MiddleUp,
+        _ => throw new ArgumentOutOfRangeException(nameof(button), button, "Only the left, right and middle buttons are driven.")
+    };
 
     // Drags from one point to another in steps, so that the moves in between are reported the way a hand
     // would report them. A stroke that only looked at the end points would miss whether the gesture joins up.

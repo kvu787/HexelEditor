@@ -202,62 +202,60 @@ public sealed class GpuHexRenderer : IDisposable
         int width = askWidth, height = askHeight;
         float zoom = askZoom, offsetX = askOffsetX, offsetY = askOffsetY;
         var grid = askGrid;
+        if (surface == null || surfaceWidth != width || surfaceHeight != height)
         {
-            if (surface == null || surfaceWidth != width || surfaceHeight != height)
-            {
-                surface?.Dispose();
-                readback?.Dispose();
-                var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
-                surface = SKSurface.Create(context!, budgeted: true, info, sampleCount: 0, GRSurfaceOrigin.TopLeft)
-                    ?? throw new InvalidOperationException($"Could not create a {width} by {height} GPU surface.");
-                readback = new SKBitmap(info);
-                surfaceWidth = width;
-                surfaceHeight = height;
-            }
-
-            // The colour texture is ArtworkCache's raster: two texels a cell across, so the
-            // half-cell offset of alternate rows lands on exactly one texel. It is only re-uploaded
-            // when a cell actually changed, so panning and zooming upload nothing.
-            var raster = cache.Refresh(document);
-            // A version counts the changes within one cache, so it says nothing across two of them: a second
-            // cache reaching a version this one has already seen would leave the first cache's texture in
-            // place. Which cache the texture came from is therefore part of whether it is still current.
-            if (colours == null || colourVersion != cache.Version || !ReferenceEquals(colourSource, cache))
-            {
-                colours?.Dispose();
-                colours = SKImage.FromBitmap(raster);
-                colourSource = cache;
-                colourVersion = cache.Version;
-            }
-
-            var cellPixels = (float)(Math.Sqrt(3) * CanvasGeometry.CellRadius * zoom);
-            var pointyTop = document.Orientation == HexOrientation.PointyTop;
-            using var child = colours.ToShader(SKShaderTileMode.Decal, SKShaderTileMode.Decal,
-                new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
-            using var uniforms = new SKRuntimeEffectUniforms(effect!)
-            {
-                { "invScale", new[] { 1f / zoom, 1f / zoom } },
-                { "pan", new[] { offsetX, offsetY } },
-                { "grid", new[] { (float)document.Width, (float)document.Height } },
-                { "radius", CanvasGeometry.CellRadius },
-                { "pointy", pointyTop ? 1f : 0f },
-                // The grid is drawn analytically from the distance to the nearest cell edge, which
-                // is exact at every zoom and costs nothing per cell. Below a few pixels a cell it
-                // would only be a grey wash, so it stops there as the old renderer did.
-                { "gridStrength", grid && cellPixels >= GridAbovePixels ? 0.23f : 0f },
-                { "gridWidth", GridLinePixels / zoom },
-            };
-            using var children = new SKRuntimeEffectChildren(effect!) { { "colours", child } };
-            using var shader = effect!.ToShader(uniforms, children);
-            using var paint = new SKPaint { Shader = shader };
-
-            surface.Canvas.Clear(SKColors.Transparent);
-            surface.Canvas.DrawRect(new SKRect(0, 0, width, height), paint);
-            context!.Flush();
-            if (!surface!.ReadPixels(readback!.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
-                throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
-            return readback;
+            surface?.Dispose();
+            readback?.Dispose();
+            var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            surface = SKSurface.Create(context!, budgeted: true, info, sampleCount: 0, GRSurfaceOrigin.TopLeft)
+                ?? throw new InvalidOperationException($"Could not create a {width} by {height} GPU surface.");
+            readback = new SKBitmap(info);
+            surfaceWidth = width;
+            surfaceHeight = height;
         }
+
+        // The colour texture is ArtworkCache's raster: two texels a cell across, so the
+        // half-cell offset of alternate rows lands on exactly one texel. It is only re-uploaded
+        // when a cell actually changed, so panning and zooming upload nothing.
+        var raster = cache.Refresh(document);
+        // A version counts the changes within one cache, so it says nothing across two of them: a second
+        // cache reaching a version this one has already seen would leave the first cache's texture in
+        // place. Which cache the texture came from is therefore part of whether it is still current.
+        if (colours == null || colourVersion != cache.Version || !ReferenceEquals(colourSource, cache))
+        {
+            colours?.Dispose();
+            colours = SKImage.FromBitmap(raster);
+            colourSource = cache;
+            colourVersion = cache.Version;
+        }
+
+        var cellPixels = (float)(Math.Sqrt(3) * CanvasGeometry.CellRadius * zoom);
+        var pointyTop = document.Orientation == HexOrientation.PointyTop;
+        using var child = colours.ToShader(SKShaderTileMode.Decal, SKShaderTileMode.Decal,
+            new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
+        using var uniforms = new SKRuntimeEffectUniforms(effect!)
+        {
+            { "invScale", new[] { 1f / zoom, 1f / zoom } },
+            { "pan", new[] { offsetX, offsetY } },
+            { "grid", new[] { (float)document.Width, (float)document.Height } },
+            { "radius", CanvasGeometry.CellRadius },
+            { "pointy", pointyTop ? 1f : 0f },
+            // The grid is drawn analytically from the distance to the nearest cell edge, which
+            // is exact at every zoom and costs nothing per cell. Below a few pixels a cell it
+            // would only be a grey wash, so it stops there as the old renderer did.
+            { "gridStrength", grid && cellPixels >= GridAbovePixels ? 0.23f : 0f },
+            { "gridWidth", GridLinePixels / zoom },
+        };
+        using var children = new SKRuntimeEffectChildren(effect!) { { "colours", child } };
+        using var shader = effect!.ToShader(uniforms, children);
+        using var paint = new SKPaint { Shader = shader };
+
+        surface.Canvas.Clear(SKColors.Transparent);
+        surface.Canvas.DrawRect(new SKRect(0, 0, width, height), paint);
+        context!.Flush();
+        if (!surface!.ReadPixels(readback!.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
+            throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
+        return readback;
     }
 
     private void Release()
