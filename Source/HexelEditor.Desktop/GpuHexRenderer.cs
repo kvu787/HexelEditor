@@ -14,6 +14,8 @@ namespace HexelEditor.Desktop;
 // where the most cells are visible, and the three detail tiers exist to claw some of it back. The
 // jaggies below 67% zoom are what they cost.
 //
+// Every cell edge is hard: one sample a pixel, no antialiasing anywhere in this file.
+//
 // A hex grid is a regular tiling, so "which cell is this point in" is closed-form arithmetic --
 // HexGeometry.FromPoint, written as SkSL. That turns the frame into one rectangle and a per-pixel
 // calculation, which costs what the window costs and nothing at all for the canvas behind it.
@@ -62,8 +64,6 @@ public sealed class GpuHexRenderer : IDisposable
     private float askZoom, askOffsetX, askOffsetY;
     private bool askGrid;
     private SKBitmap? answer;
-
-    public bool Antialias { get; set; } = true;
 
     private GpuHexRenderer()
     {
@@ -188,7 +188,6 @@ public sealed class GpuHexRenderer : IDisposable
                 { "grid", new[] { (float)document.Width, (float)document.Height } },
                 { "radius", ArtworkRenderer.CellRadius },
                 { "pointy", pointyTop ? 1f : 0f },
-                { "taps", Antialias ? 4f : 1f },
                 // The grid is drawn analytically from the distance to the nearest cell edge, which
                 // is exact at every zoom and costs nothing per cell. Below a few pixels a cell it
                 // would only be a grey wash, so it stops there as the old renderer did.
@@ -236,7 +235,6 @@ uniform float2 pan;
 uniform float2 grid;
 uniform float  radius;
 uniform float  pointy;
-uniform float  taps;
 uniform float  gridStrength;
 uniform float  gridWidth;
 
@@ -283,24 +281,16 @@ half4 sampleOne(float2 w) {
         float2 p = w - centre;
         if (pointy < 0.5) { p = float2(p.y, p.x); }
         float reach = max(abs(p.x), max(abs(0.5 * p.x + HALF_SQRT3 * p.y), abs(-0.5 * p.x + HALF_SQRT3 * p.y)));
-        float edge = 1.0 - smoothstep(radius * HALF_SQRT3 - gridWidth, radius * HALF_SQRT3, reach);
+        float edge = 1.0 - step(radius * HALF_SQRT3 - gridWidth, reach);
         colour = mix(half4(half3(0.0), colour.a), colour, half(edge));
     }
     return colour;
 }
 
 half4 main(float2 coord) {
-    float2 w = (coord - pan) * invScale;
-    if (taps < 2.0) { return sampleOne(w); }
-    // Rotated-grid four tap supersample. A single triangle has no geometric edges inside it, so
-    // MSAA would do nothing here; every cell boundary is procedural and has to be resolved in the
-    // shader. Four taps on a rotated grid beat four on an axis-aligned one for near-vertical and
-    // near-horizontal edges, which a hex grid has plenty of.
-    float2 d = invScale * 0.25;
-    return 0.25 * (sampleOne(w + float2( d.x,  3.0 * d.y))
-                 + sampleOne(w + float2(-3.0 * d.x,  d.y))
-                 + sampleOne(w + float2( 3.0 * d.x, -d.y))
-                 + sampleOne(w + float2(-d.x, -3.0 * d.y)));
+    // One sample a pixel: a pixel takes the colour of whichever cell its centre lands in, and
+    // cell edges come out hard. Nothing here softens them, by design.
+    return sampleOne((coord - pan) * invScale);
 }
 """;
 }

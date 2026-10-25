@@ -64,7 +64,6 @@
             <MenuItem Header="Zoom out" InputGestureText="-" Click="ZoomOutClicked" />
             <Separator />
             <MenuItem x:Name="GridMenuItem" Header="Hide grid" InputGestureText="H" Click="ToggleGridClicked" />
-            <MenuItem x:Name="AntialiasMenuItem" Header="Turn off smoothing" InputGestureText="A" Click="ToggleAntialiasClicked" />
             <Separator />
             <MenuItem Header="Canvas background color..." Click="BackgroundColorClicked" />
           </MenuItem>
@@ -79,9 +78,6 @@
     <Border Grid.Row="1" BorderBrush="{StaticResource Divider}" BorderThickness="0,0,0,1">
       <DockPanel Margin="12,0">
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-          <CheckBox x:Name="Antialias" Content="Smooth"
-                    Checked="AntialiasChanged" Unchecked="AntialiasChanged"
-                    Margin="0,0,14,0" ToolTip="Antialias the cell edges (A)" />
           <CheckBox x:Name="ShowGrid" Content="Grid" Checked="GridChanged" Unchecked="GridChanged"
                     Margin="0,0,14,0" ToolTip="Show the hexagon grid (H)" />
           <Border Width="1" Background="{StaticResource Divider}" Margin="0,10,10,10" />

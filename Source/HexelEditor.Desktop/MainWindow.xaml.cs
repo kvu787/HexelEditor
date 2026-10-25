@@ -46,7 +46,6 @@ public partial class MainWindow : Window
         FilledShapes.Checked += (_, _) => EditorCanvas.FilledShapes = true;
         FilledShapes.Unchecked += (_, _) => EditorCanvas.FilledShapes = false;
         ShowGrid.IsChecked = EditorCanvas.ShowGrid;
-        Antialias.IsChecked = EditorCanvas.Antialias;
         AttachSession(session);
         SetColor(0xFF000000);
         SetTool(DrawingTool.Pencil);
@@ -347,7 +346,6 @@ public partial class MainWindow : Window
     }
 
     private void ToggleGrid() => ShowGrid.IsChecked = ShowGrid.IsChecked != true;
-    private void ToggleAntialias() => Antialias.IsChecked = Antialias.IsChecked != true;
     private void ChangeBrush(int delta) { EditorCanvas.BrushRadius = Math.Clamp(EditorCanvas.BrushRadius + delta, 0, EditorSession.MaximumBrushRadius); BrushSizeLabel.Text = (EditorCanvas.BrushRadius * 2 + 1).ToString(); EditorCanvas.InvalidateVisual(); }
 
     private void OnKeyDown(object sender, KeyEventArgs args)
@@ -373,7 +371,7 @@ public partial class MainWindow : Window
         {
             case Key.B: SetTool(DrawingTool.Pencil); break; case Key.E: SetTool(DrawingTool.Eraser); break; case Key.G: SetTool(DrawingTool.Fill); break;
             case Key.I: SetTool(DrawingTool.Eyedropper); break; case Key.L: SetTool(DrawingTool.Line); break; case Key.U: SetTool(DrawingTool.Rectangle); break; case Key.M: SetTool(DrawingTool.Selection); break;
-            case Key.F: EditorCanvas.Fit(); break; case Key.H: ToggleGrid(); break; case Key.A: ToggleAntialias(); break;
+            case Key.F: EditorCanvas.Fit(); break; case Key.H: ToggleGrid(); break;
             case Key.OemOpenBrackets: ChangeBrush(-1); break; case Key.OemCloseBrackets: ChangeBrush(1); break;
             case Key.OemPlus: case Key.Add: EditorCanvas.ChangeZoom(1.2f); break; case Key.OemMinus: case Key.Subtract: EditorCanvas.ChangeZoom(1 / 1.2f); break;
             case Key.Delete: case Key.Back: Act(session.ClearPixels); break;
@@ -408,7 +406,6 @@ public partial class MainWindow : Window
     private void DeselectClicked(object sender, RoutedEventArgs args) => Act(session.ClearSelection);
     private void ClearClicked(object sender, RoutedEventArgs args) => Act(session.ClearPixels);
     private void ToggleGridClicked(object sender, RoutedEventArgs args) => ToggleGrid();
-    private void ToggleAntialiasClicked(object sender, RoutedEventArgs args) => ToggleAntialias();
     private void SmallerBrushClicked(object sender, RoutedEventArgs args) => ChangeBrush(-1);
     private void LargerBrushClicked(object sender, RoutedEventArgs args) => ChangeBrush(1);
     private void ZoomOutClicked(object sender, RoutedEventArgs args) => EditorCanvas.ChangeZoom(1 / 1.2f);
@@ -423,16 +420,6 @@ public partial class MainWindow : Window
     {
         var name = EditorDialogs.Prompt(this, "Rename layer", "Layer name", session.Document.Layers[session.ActiveLayer].Name);
         if (name != null) Act(() => session.SetLayerName(name));
-    }
-
-    private void AntialiasChanged(object sender, RoutedEventArgs args)
-    {
-        // A checkbox raises Checked while XAML is still being loaded, before the fields it wants
-        // exist. Setting the initial state from the constructor avoids that, and this guard keeps
-        // a stray early event from throwing where the only place to report it is a message box.
-        if (EditorCanvas == null || AntialiasMenuItem == null) return;
-        EditorCanvas.Antialias = Antialias.IsChecked == true;
-        AntialiasMenuItem.Header = EditorCanvas.Antialias ? "Turn off smoothing" : "Turn on smoothing";
     }
 
     private void GridChanged(object sender, RoutedEventArgs args)

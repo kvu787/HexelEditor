@@ -33,16 +33,6 @@ public sealed class HexCanvas : SKElement
     public int BrushRadius { get; set; }
     public bool ShowGrid { get; set; } = true;
 
-    // Antialiasing is the shader supersampling its cell lookup, so it is a property of the GPU
-    // renderer rather than of any paint. With it off the grid shows the hard pixel edges that a
-    // single sample a pixel gives, which is what the CPU mesh tier always did.
-    public bool Antialias
-    {
-        get => antialias;
-        set { antialias = value; if (gpu != null) gpu.Antialias = value; InvalidateVisual(); }
-    }
-    private bool antialias = true;
-
     /// <summary>True once the GPU renderer is running; false means the CPU fallback is in use.</summary>
     public bool UsingGpu => gpu != null;
     public bool FilledShapes { get; set; }
@@ -132,7 +122,6 @@ public sealed class HexCanvas : SKElement
                 gpu = GpuHexRenderer.TryCreate(App.Log.Write);
             else
                 App.Log.Write("GPU renderer disabled by HEXEL_DISABLE_GPU.");
-            if (gpu != null) gpu.Antialias = antialias;
         }
 
         // The artwork is one shaded rectangle covering the window, drawn at device resolution so
