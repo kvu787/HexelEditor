@@ -1094,3 +1094,95 @@ vec2 centre = /* computed from column and row */;
 ```
 
 That's a legal but unusual thing for a vertex shader to do, and nothing in your Godot experience would have prepared you for it. Both are ordinary vertex shaders; one processes input, the other generates it.
+
+## User
+
+okay, one thing this brought up that i want to clarify is how "smooth shading" works. let's say you have a fairly low resolution uv sphere in blender. there's an obvious visual difference between smooth shading off and on. how does "smooth shading" work?
+
+## Assistant
+
+**The geometry doesn't change at all.** Same vertices, same faces, same triangle count. The only thing that changes is which **normals** the renderer uses.
+
+### The two cases
+
+Take a cross-section of a sphere approximated by a few flat segments:
+
+```
+  flat shading                          smooth shading
+
+      ^     ^     ^                        \    ^    /
+      |     |     |                         \   |   /
+   ---+-----+-----+---                   ----o---o---o----
+      A     B     C                         v1  v2  v3
+
+  one normal per FACE,                  one normal per VERTEX, each the
+  constant across the whole face        average of the faces either side,
+                                        then blended across each face
+```
+
+**Flat**: every pixel of face B uses face B's normal -- a single direction perpendicular to that triangle. Same normal everywhere means same lighting everywhere, so the face comes out one uniform tone and you see it as a distinct facet.
+
+**Smooth**: each vertex gets a normal that is the **average of the normals of every face touching it** (usually weighted by the angle each face subtends there, so the result doesn't change when you re-tessellate). Those per-vertex normals are then interpolated across the triangle -- the exact `varying` mechanism from the last message. Every pixel gets a slightly different normal, so the lighting varies continuously and the facet boundary disappears.
+
+### It is a deliberate lie
+
+This is the part worth internalising: in the middle of a flat triangle, the interpolated normal points somewhere **the actual surface does not face**. The geometry is flat there; the shading claims it's curved.
+
+That's the whole trick. Smooth shading doesn't make the model rounder, it makes the model *lie about its orientation* in a way that happens to match the rounder surface it was approximating.
+
+### Through the pipeline
+
+```glsl
+varying vec3 v_normal;
+
+void vertex() {
+    v_normal = NORMAL;          // the averaged per-vertex normal
+}
+                                // <- rasteriser blends it across the triangle
+
+void fragment() {
+    vec3 n = normalize(v_normal);   // each pixel gets its own direction
+}
+```
+
+The averaging itself happens at mesh level, not in the shader. Toggling Shade Smooth in Blender changes what normals are stored and handed to the GPU. The shader code is identical either way -- which is why your Simple Paint Shader never had to know about it.
+
+### Why you wrote `normalize(NORMAL)`
+
+In `K01.gdshader` you open with `vec3 normal = normalize(NORMAL);`, and that line is load-bearing for a reason you may not have had in mind.
+
+Interpolating between two unit vectors gives you a point on the **chord** between them, not on the arc. The result is shorter than 1 -- most so halfway between two very different normals. Without renormalizing, your `facingRatio = clamp(normal.z, 0, 1)` would read slightly too low across the middle of every face, and you'd get faint dark banding exactly where the facets used to be.
+
+So you already did the right thing; this is why.
+
+### The silhouette gives it away
+
+Interpolating normals cannot change the outline. A 12-segment UV sphere still has a 12-sided silhouette no matter how smooth the interior shading looks. That's the classic tell, and it's why the fix for a visibly polygonal edge is more geometry (or subdivision), never smooth shading.
+
+### Sharp edges, and why a cube has 24 vertices
+
+If averaging happened everywhere, a cube would come out looking like a soft blob -- each corner's normal averaged from three perpendicular faces, pointing diagonally outward.
+
+So renderers allow a vertex to carry **more than one normal**, by splitting it. Blender does this via sharp edges, an auto-smooth angle threshold (faces meeting above N degrees don't average), or explicit custom split normals.
+
+The consequence is that a "vertex" to the modeller and a "vertex" to the GPU are different things. A cube has **8** positions but **24** GPU vertices: each corner appears three times, once per face, each copy carrying a different normal. The GPU has no concept of "one position with three normals" -- if any attribute differs, it's a separate vertex.
+
+Which is the same rule that came up with the hex grid, where cells don't share corner vertices with their neighbours: two cells of different colours meeting at a point need their own copies of that point, because the attributes differ.
+
+### Gouraud vs Phong
+
+Worth knowing because the names still get used:
+
+| | What is interpolated | Cost | Problem |
+| ---------- | -------------------------------- | ---------- | ------------------------------------------ |
+| **Flat**   | nothing, one normal per face     | cheapest   | visible facets                             |
+| **Gouraud**| the computed *colour* per vertex | cheap      | specular highlights vanish between vertices |
+| **Phong**  | the *normal*, lit per pixel      | more       | none of consequence                        |
+
+Modern GPUs and Blender both do the Phong variety: interpolate the normal, run the lighting in the fragment stage. Gouraud is what the vertex stage would do if you computed `ALBEDO` in `vertex()` and passed the colour down -- which is occasionally a worthwhile optimisation, and exactly the tradeoff `SchlickVertex.gdshader` is playing with.
+
+### Your shader depends on this
+
+`facingRatio = clamp(normal.z, 0.0, 1.0)` is "how directly does this point face the camera". With flat shading, every pixel on a face shares one `normal.z`, so your Schlick ramp produces **one flat tone per facet** -- the monkey would come out as a mosaic of solid patches.
+
+The smooth gradients in your README images exist because the normals are interpolated. Your whole look is built on top of smooth shading; it's just that Blender did that part before your shader ever ran.
