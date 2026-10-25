@@ -36,3 +36,25 @@ Paint one cell went from 1.31 ms to 0.15 ms end to end, and a pan from 1.18 ms t
 **Not verified.** Only a frame's cost on the editor's own thread is measured. The compositor's and the display's share cannot be timed on a desktop that is not displayed, so whether the window now reaches all 119 frames a second while painting is reasoned rather than measured.
 
 Two commits carry the work, one for the code and one for the document, and this record follows them.
+
+## User
+
+i'm not using the pc atm. can you verify this?
+
+Not verified. Only a frame's cost on the editor's own thread is measured. The compositor's and the display's share cannot be timed on a desktop that is not displayed, so whether the window now holds all 119 frames a second while painting is reasoned rather than measured.
+
+## User (sent while the work was running)
+
+you can use the non-NE18NZ2 displays since i'm not using the pc currently
+
+## Assistant
+
+Not yet, and the reason is on your side of the machine: the session is locked. The lock screen is the foreground window on every display, so nothing I put on a display is shown, and the pointer input I drove went to the lock screen rather than to the editor. That means two things only you can change before this can be measured.
+
+**What I found.** NE18NZ2 runs at 75 Hz; the two PA278QGV displays are the 120 Hz ones, so the question is about them, and your permission to use them is what makes the measurement possible. The plan was a real brush drag across the editor on the primary 120 Hz display while PresentMon records every frame the editor presents and when each reaches the display. I wrote the scripts for that, and ran them. The drag was driven for eight seconds each time, the cursor was put back where it was, and the editor was closed without a dialog.
+
+**Why there is no result.** With the lock screen up the editor is not shown, so it presented nothing to measure, and the first two drags clicked and moved on the lock screen rather than on the editor, which only brought up its sign-in prompt. Driving the stroke through window messages instead reaches the editor, but still shows nothing on a display, and PresentMon recorded no frames from any process while locked, so there is also no evidence yet that this shell can see presents at all; PresentMon states that it needs elevation to attribute processes, and I will not raise a UAC prompt on a machine nobody is at.
+
+**What I need from you.** Unlock the session and leave it unlocked for a few minutes, then say so. If you can also run the capture from an elevated PowerShell, that gives the strongest answer, since PresentMon then sees the displayed time of every frame; otherwise I will measure WPF's own render cadence from inside the editor, which needs no elevation and tells how many frames the window renders a second, though not when each one lit the display.
+
+Nothing in the repository changed this turn beyond this record. The scripts live in my scratchpad and the trial captures in LogOutput, which is ignored.
