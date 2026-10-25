@@ -63,8 +63,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        // The GL context, its thread and its GPU surfaces outlive every window, so the
-        // application is the only thing with the standing to let them go.
+        // The renderer and its GPU surfaces outlive every window, so the application is the only thing with
+        // the standing to let them go. Still on the interface thread, where its context is current.
         GpuHexRenderer.DisposeShared();
         try
         {
@@ -85,10 +85,13 @@ public partial class App : Application
         // Settled before anything is built, because what must not take the foreground includes the window's
         // own construction: the editor focuses its canvas as it sets its first tool.
         KeepFocusAway = placement != null;
-        // The shader is the only thing that draws the canvas. Settled before there is a window, because the
-        // alternative is an editor that opens, looks ordinary, and has nothing in the middle of it: the
-        // failure belongs at the start where it can be read, not on the first frame where it cannot.
-        if (GpuHexRenderer.Shared(Log.Write) == null)
+        // Building the window builds the canvas, and the canvas opens the GPU and builds the renderer over it.
+        // The shader is the only thing that draws the canvas, so a GPU that could not be opened is settled
+        // here, before the window is shown: the alternative is an editor that opens, looks ordinary, and has
+        // nothing in the middle of it. The failure belongs at the start where it can be read, not on the
+        // first frame where it cannot.
+        var window = new MainWindow();
+        if (GpuHexRenderer.Shared == null)
         {
             var reason = GpuHexRenderer.Unavailable ?? "The GPU renderer is unavailable.";
             Log.Write($"Refusing to start: {reason}");
@@ -102,7 +105,6 @@ public partial class App : Application
             Shutdown(2);
             return;
         }
-        var window = new MainWindow();
         MainWindow = window;
         if (verifying)
         {
@@ -112,9 +114,9 @@ public partial class App : Application
             window.Width = 1440; window.Height = 960;
             var root = (FrameworkElement)window.Content;
             window.Content = null;
-            // SKElement needs a presentation source. This host never shows on a display: it sits at
-            // -30000,-30000, which is on no monitor, and validation runs it on a desktop that is not being
-            // displayed at all.
+            // The canvas needs a presentation source to have a size and a framebuffer. This host never shows
+            // on a display: it sits at -30000,-30000, which is on no monitor, and validation runs it on a
+            // desktop that is not being displayed at all.
             //
             // It is marked visible all the same, because WPF's hit testing for pointer input asks the window
             // manager which window lies at a point, and the window manager only answers with visible windows.
@@ -134,7 +136,7 @@ public partial class App : Application
             window.VerifyEditor(folder);
             var bitmap = new RenderTargetBitmap(1440, 960, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(root);
-            window.VerifyCanvasRendered();
+            window.VerifyCanvasRendered(folder);
             var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(Path.Combine(folder, "Editor.png"))) encoder.Save(stream);
             window.VerifyInterface(folder);

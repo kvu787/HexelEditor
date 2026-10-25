@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../HexelEditor.Core/HexelEditor.Core.csproj" />
-    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.150.2" />
+    <PackageReference Include="OpenTK.GLWpfControl" Version="4.2.3" />
+    <PackageReference Include="SkiaSharp" Version="4.150.2" />
   </ItemGroup>
 </Project>

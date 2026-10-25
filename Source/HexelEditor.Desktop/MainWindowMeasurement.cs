@@ -114,8 +114,7 @@ public partial class MainWindow
     // the frame, because it is the only one asking what the GPU's own share of it is.
     private void MeasureRendererFrames()
     {
-        var renderer = GpuHexRenderer.Shared(App.Log.Write)
-            ?? throw new InvalidOperationException("There is no GPU renderer: " + GpuHexRenderer.Unavailable);
+        var renderer = Renderer();
         var example = ExampleDocument.Create();
         var large = LargeDocument();
         GpuHexRenderer.MeasureFrames = true;
@@ -138,9 +137,12 @@ public partial class MainWindow
         void Frame(string name, HexDocument document, int width, int height, float cellPixels, bool dirty)
         {
             using var cache = new ArtworkCache();
+            // A GPU surface of the frame's size stands in for the window's framebuffer: the frame is drawn
+            // into it and left there, as the window's is, with nothing read back.
+            using var surface = renderer.CreateSurface(width, height);
             var zoom = ZoomForCellPixels(cellPixels);
             const int runs = 20;
-            List<double> composite = [], upload = [], submit = [], gpu = [], readback = [], whole = [];
+            List<double> composite = [], upload = [], submit = [], gpu = [], whole = [];
             var cells = document.Layers[0].Cells;
             for (var run = -1; run < runs; run++)
             {
@@ -152,11 +154,11 @@ public partial class MainWindow
                     cells[index] = HexDocument.DefaultPalette[(run + 2) % HexDocument.DefaultPalette.Length];
                     cache.MarkDirty((index % document.Width, index / document.Width, index % document.Width, index / document.Width));
                 }
-                renderer.Render(document, cache, width, height, zoom, width / 2f, height / 2f, grid: true);
+                renderer.Draw(surface.Canvas, width, height, document, cache, zoom, width / 2f, height / 2f, grid: true);
                 if (run < 0) continue;
                 var frame = renderer.LastFrameTimings;
                 composite.Add(frame.Composite); upload.Add(frame.Upload); submit.Add(frame.Submit);
-                gpu.Add(frame.Gpu); readback.Add(frame.Readback); whole.Add(frame.Total);
+                gpu.Add(frame.Gpu); whole.Add(frame.Total);
             }
             var group = $"Frame: {name}";
             var detail = $"{document.Width}x{document.Height} cells, {width}x{height} px, {cellPixels:0.#} px a cell";
@@ -164,7 +166,6 @@ public partial class MainWindow
             Add(group, "Upload colour texture", detail, upload);
             Add(group, "Record the draw", detail, submit);
             Add(group, "GPU runs the shader", detail, gpu);
-            Add(group, "Read the frame back", detail, readback);
             Add(group, "Whole frame", detail, whole);
             App.Log.Write($"Frame {name}: {detail}, {Middle(whole):0.000} ms");
         }
@@ -195,8 +196,12 @@ public partial class MainWindow
         });
     }
 
+    private static GpuHexRenderer Renderer() => GpuHexRenderer.Shared
+        ?? throw new InvalidOperationException("There is no GPU renderer: " + GpuHexRenderer.Unavailable);
+
     // The real control painting, in the real window, with the real renderer behind it. The parts come from
-    // HexCanvas itself; what this does is set up the cases and force the frames.
+    // HexCanvas itself; what this does is set up the cases and force the frames. The frames go into a GPU
+    // surface of the renderer's, which is what the window's own framebuffer is to the paint.
     private void MeasureCanvasPaints()
     {
         // Shared by every case, so no two cases paint the same cell the same colour. One that did would
@@ -229,10 +234,9 @@ public partial class MainWindow
                 (int)Math.Round(EditorCanvas.ActualWidth * deviceScale),
                 (int)Math.Round(EditorCanvas.ActualHeight * deviceScale),
                 SKColorType.Bgra8888, SKAlphaType.Premul);
-            using var surface = SKSurface.Create(info)
-                ?? throw new InvalidOperationException($"Could not create a {info.Width} by {info.Height} surface to paint into.");
+            using var surface = Renderer().CreateSurface(info.Width, info.Height);
             const int runs = 12;
-            List<double> backdrop = [], artwork = [], blit = [], overlays = [], whole = [];
+            List<double> artwork = [], overlays = [], gpu = [], whole = [];
             for (var run = -1; run < runs; run++)
             {
                 // A dab before the frame, so the frame is one a stroke would really ask for: cells changed
@@ -241,21 +245,19 @@ public partial class MainWindow
                 // changes nothing and would measure a frame with no edit in it.
                 if (dab) measured.Paint(HexGeometry.FromOffset(dabbed % document.Width, 10, document.Orientation),
                     0xFF000000u | (uint)(0x2FC866 + dabbed++ * 0x131));
-                EditorCanvas.PaintOneFrame(surface, info);
+                EditorCanvas.PaintOneFrame(surface, info.Width, info.Height);
                 if (run < 0) continue;
                 var paint = EditorCanvas.LastPaintTimings;
-                backdrop.Add(paint.Backdrop); artwork.Add(paint.Artwork); blit.Add(paint.Blit);
-                overlays.Add(paint.Overlays); whole.Add(paint.Total);
+                artwork.Add(paint.Artwork); overlays.Add(paint.Overlays); gpu.Add(paint.Gpu); whole.Add(paint.Total);
             }
             var group = $"Paint: {name}";
             var detail = $"{document.Width}x{document.Height} cells, {info.Width}x{info.Height} px, "
                 + $"{EditorCanvas.Zoom * deviceScale * Math.Sqrt(3) * CanvasGeometry.CellRadius:0.#} px a cell, "
                 + $"{measured.Selection.Count:N0} selected, overlays walked {EditorCanvas.LastOverlayCells:N0} cells "
                 + $"in a clip of {EditorCanvas.LastVisibleBounds.Width:0}x{EditorCanvas.LastVisibleBounds.Height:0}";
-            Add(group, "Dotted backdrop", detail, backdrop);
-            Add(group, "Artwork, and the wait for it", detail, artwork);
-            Add(group, "Copy the frame onto the surface", detail, blit);
+            Add(group, "Artwork, recorded and handed over", detail, artwork);
             Add(group, "Selection, previews and cursor", detail, overlays);
+            Add(group, "GPU finishes the frame", detail, gpu);
             Add(group, "Whole paint", detail, whole);
         }
     }
@@ -354,18 +356,16 @@ public partial class MainWindow
     // reported separately because they are fixed in different places: the operation is the session's work,
     // the panels are the interface rebuilding itself, and the paint is the renderer.
     //
-    // Forcing the frame renders the whole window into a bitmap in software, which is not how the editor
-    // reaches a display and costs far more than the paint inside it. So what is reported here is the paint's
-    // own figure, out of HexCanvas, and never the time the forcing took.
+    // The frame is painted into a GPU surface of the renderer's through the canvas's own paint, and what is
+    // reported is the paint's own figure, out of HexCanvas, with the GPU's share waited for at the end.
     private void MeasureInteractions()
     {
         var document = LargeDocument();
         var interacting = new EditorSession(document);
         AttachSession(interacting);
         EditorCanvas.Fit();
-        var info = new SKImageInfo((int)EditorCanvas.ActualWidth, (int)EditorCanvas.ActualHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-        using var surface = SKSurface.Create(info)
-            ?? throw new InvalidOperationException("Could not create a surface to paint into.");
+        int width = (int)EditorCanvas.ActualWidth, height = (int)EditorCanvas.ActualHeight;
+        using var surface = Renderer().CreateSurface(width, height);
         HexCanvas.MeasurePaints = true;
         try
         {
@@ -400,7 +400,7 @@ public partial class MainWindow
         }
         finally { HexCanvas.MeasurePaints = false; }
 
-        void Frame() => EditorCanvas.PaintOneFrame(surface, info);
+        void Frame() => EditorCanvas.PaintOneFrame(surface, width, height);
 
         void Interaction(string name, int runs, Action act, Action? before = null)
         {
@@ -416,7 +416,7 @@ public partial class MainWindow
                 var painted = EditorCanvas.LastPaintTimings.Total;
                 operation.Add(acted); paint.Add(painted); together.Add(acted + painted);
             }
-            var detail = $"2000x1000, 3 layers, {info.Width}x{info.Height} px, zoomed to fit";
+            var detail = $"2000x1000, 3 layers, {width}x{height} px, zoomed to fit";
             Add($"Interaction: {name}", "The operation itself", detail, operation);
             Add($"Interaction: {name}", "The frame that follows", detail, paint);
             Add($"Interaction: {name}", "Both, which is what is waited for", detail, together);

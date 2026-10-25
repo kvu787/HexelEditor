@@ -2,15 +2,28 @@ using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using HexelEditor.Core;
+using OpenTK.Wpf;
 using SkiaSharp;
-using SkiaSharp.Views.Desktop;
-using SkiaSharp.Views.WPF;
 
 namespace HexelEditor.Desktop;
 
 public enum DrawingTool { Pencil, Eraser, Fill, Eyedropper, Line, Rectangle, Selection }
 
-public sealed class HexCanvas : SKElement
+// The canvas: a GL framebuffer WPF composites as a Direct3D surface, painted with Skia through the GPU
+// renderer's context.
+//
+// Why GLWpfControl rather than the bitmap element this used to be: that element hands WPF a bitmap on the
+// processor, so every frame drawn on the GPU had to be read back across the bus to reach it, and WPF then
+// uploaded it again to show it. At a 4K display's size the readback alone was 3.7 ms a frame, the whole of
+// the frame once the rest had been taken out of it. GLWpfControl shares a Direct3D 9 surface with GL
+// through the NV_DX_interop extension and shows that surface through a D3DImage, so the frame is drawn
+// where it is shown and nothing crosses the bus.
+//
+// Why this is the element that extends GLWpfControl rather than SkiaSharp's SKGLElement: SKGLElement
+// builds a GRContext of its own on first paint, and the renderer's textures live in a GRContext, so the two
+// have to be the same one. The renderer's is built here, as soon as the element has started and its GL
+// context is current, and the element's framebuffer is wrapped as a surface of that context each frame.
+public sealed class HexCanvas : GLWpfControl
 {
     private const float MinimumZoom = 0.08f;
     private const float MaximumZoom = 30f;
@@ -19,10 +32,33 @@ public sealed class HexCanvas : SKElement
     private const float DotOffset = 18f;
     private const float DotRadius = 0.7f;
     private static readonly SKColor Paper = new(243, 243, 243);
+    // GL_RGBA8, the sized format the element's framebuffer is declared to Skia as. The Direct3D surface
+    // behind it is X8R8G8B8, and the driver maps the one onto the other.
+    private const uint GlRgba8 = 0x8058;
+    // The settings every canvas starts with. GLWpfControl shares one GL context between every element in the
+    // process and refuses a second element whose settings would call for a different one, so they are fixed
+    // here. 3.3 core is what the renderer was written against; RenderContinuously is off because the canvas
+    // repaints when something changed, through InvalidateVisual, and not on every composition tick.
+    private static GLWpfControlSettings ElementSettings => new()
+    {
+        MajorVersion = 3,
+        MinorVersion = 3,
+        GraphicsProfile = OpenTK.Windowing.Common.ContextProfile.Core,
+        RenderContinuously = false,
+        UseDeviceDpi = true,
+        TransparentBackground = false,
+    };
     private EditorSession? session;
     private readonly ArtworkCache artwork = new();
     private readonly SelectionMask selectionMask = new();
-    private GpuHexRenderer? gpu;
+    // Null when the GPU could not be opened, which the application refuses to start on before anything is
+    // drawn. GpuHexRenderer.Unavailable says why.
+    private readonly GpuHexRenderer? gpu;
+    // The element's framebuffer as a Skia surface. Wrapped once and kept while the framebuffer stays the
+    // same, because GLWpfControl keeps the same one until the element changes size.
+    private GRBackendRenderTarget? frameTarget;
+    private SKSurface? frame;
+    private int frameWidth, frameHeight, frameHandle;
     private HexCoordinate? hover;
     private HexCoordinate? start;
     private HexCoordinate? previous;
@@ -41,19 +77,24 @@ public sealed class HexCanvas : SKElement
     public bool FilledShapes { get; set; }
     public bool SpacePressed { get; set; }
     public HexCoordinate? HoverCoordinate => hover;
+
+    /// <summary>The size in device pixels of the last frame the element drew, or zero before the first.</summary>
+    public SKSize CanvasSize { get; private set; }
+
     /// <summary>
-    /// What one paint spent, in milliseconds: the dotted backdrop, the artwork (the renderer's whole frame,
-    /// including the wait on its thread), copying that frame onto this surface, and the selection, previews
-    /// and cursor ring drawn over it. Only filled while <see cref="MeasurePaints"/> is set.
+    /// What one paint spent, in milliseconds: the artwork (the renderer's whole frame, recorded and handed
+    /// to the GPU), the selection, previews and cursor ring drawn over it, and then the wait for the GPU to
+    /// finish the frame, which is only waited for while measuring. Only filled while
+    /// <see cref="MeasurePaints"/> is set.
     /// </summary>
-    public readonly record struct PaintTimings(double Backdrop, double Artwork, double Blit, double Overlays)
+    public readonly record struct PaintTimings(double Artwork, double Overlays, double Gpu)
     {
-        public double Total => Backdrop + Artwork + Blit + Overlays;
+        public double Total => Artwork + Overlays + Gpu;
     }
 
     /// <summary>
     /// Times each paint's parts. Off unless something is measuring, because attributing the GPU's own share
-    /// costs a sync inside the frame.
+    /// costs a sync at the end of the frame.
     /// </summary>
     public static bool MeasurePaints;
 
@@ -78,7 +119,13 @@ public sealed class HexCanvas : SKElement
 
     public HexCanvas()
     {
-        PaintSurface += Paint;
+        // GLWpfControl would otherwise register class handlers that raise every key event in the window a
+        // second time on this element. The window handles the keyboard itself.
+        RegisterToEventsDirectly = false;
+        // Starting the element creates the process's GL context, or joins it, and leaves it current on this
+        // thread; the renderer is built right after, over that context.
+        gpu = GpuHexRenderer.Open(() => Start(ElementSettings), App.Log.Write);
+        Render += OnFrame;
         MouseDown += PointerDown; MouseMove += PointerMoved; MouseUp += PointerUp;
         MouseWheel += Wheel;
         MouseLeave += (_, _) => { if (!drawing) { hover = null; InvalidateVisual(); } };
@@ -86,8 +133,9 @@ public sealed class HexCanvas : SKElement
         SizeChanged += (_, _) => { if (needsFit && ActualWidth > 0 && ActualHeight > 0) Fit(); else InvalidateVisual(); };
         // The raster holds its pixels in a pinned array, so it is worth releasing deliberately
         // rather than leaving to the finalizer. ShutdownStarted fires once, unlike Unloaded,
-        // which also fires when a control is merely reparented.
-        Dispatcher.ShutdownStarted += (_, _) => { artwork.Dispose(); selectionMask.Dispose(); };
+        // which also fires when a control is merely reparented. The frame surface goes with them, while the
+        // context it belongs to is still current.
+        Dispatcher.ShutdownStarted += (_, _) => { artwork.Dispose(); selectionMask.Dispose(); ReleaseFrame(); };
         Cursor = Cursors.Cross;
     }
 
@@ -132,28 +180,75 @@ public sealed class HexCanvas : SKElement
         return new Point(x * Zoom + offsetX, y * Zoom + offsetY);
     }
 
+    // The element's own frame. GLWpfControl has locked the shared surface, bound its framebuffer and set the
+    // viewport by the time this runs, and unlocks the surface once it returns, so everything drawn into the
+    // framebuffer has to be drawn and flushed in here.
+    private void OnFrame(TimeSpan elapsed)
+    {
+        if (gpu == null) return;
+        int width = FrameBufferWidth, height = FrameBufferHeight, handle = Framebuffer;
+        if (width <= 0 || height <= 0) return;
+        // GLWpfControl's own GL calls, binding the framebuffer and the viewport, happened behind Skia's back.
+        // Skia caches the GL state it set last, so it is told to assume nothing about it before drawing.
+        gpu.Context.ResetContext();
+        if (frame == null || frameWidth != width || frameHeight != height || frameHandle != handle)
+        {
+            ReleaseFrame();
+            // Eight stencil bits and no multisampling, which is the renderbuffer GLWpfControl attaches. The
+            // origin is GL's: the shared surface is read by Direct3D the other way up, and GLWpfControl flips
+            // it back when it draws the image, so a frame drawn the GL way round comes out upright.
+            frameTarget = new GRBackendRenderTarget(width, height, sampleCount: 0, stencilBits: 8,
+                new GRGlFramebufferInfo((uint)handle, GlRgba8));
+            frame = SKSurface.Create(gpu.Context, frameTarget, GRSurfaceOrigin.BottomLeft, SKColorType.Rgba8888)
+                ?? throw new InvalidOperationException($"Could not wrap the {width} by {height} framebuffer as a surface.");
+            frameWidth = width; frameHeight = height; frameHandle = handle;
+        }
+        CanvasSize = new SKSize(width, height);
+        Paint(frame, width, height);
+        if (compareNextFrame)
+        {
+            compareNextFrame = false;
+            FrameComparison = CompareFrame(frame, width, height);
+        }
+    }
+
+    private void ReleaseFrame()
+    {
+        frame?.Dispose();
+        frame = null;
+        frameTarget?.Dispose();
+        frameTarget = null;
+    }
+
     /// <summary>
-    /// Paints one frame into a surface the caller owns, through the same code a real paint runs.
+    /// Paints one frame into a surface the caller owns, through the same code a real paint runs. The surface
+    /// has to be one of the renderer's context, which <see cref="GpuHexRenderer.CreateSurface"/> makes.
     /// </summary>
     /// <remarks>
     /// For measurement, and it exists because asking WPF for a frame is not a way to get one: a control
     /// repaints when WPF decides to run its render pass, and until then a visual is drawn from what it drew
     /// last time. Rendering the tree into a bitmap reuses that same content, so it produces a picture
-    /// without producing a paint. The surface stands in for the one SKElement hands over, which is a raster
-    /// surface of this kind over a bitmap's pixels.
+    /// without producing a paint.
     /// </remarks>
-    public void PaintOneFrame(SKSurface surface, SKImageInfo info)
+    public void PaintOneFrame(SKSurface surface, int width, int height) => Paint(surface, width, height);
+
+    // The view the renderer is given for a frame of this many device pixels: the pan and zoom in device
+    // pixels, and where the paper's dots fall. Device pixels per unit of the canvas's own coordinates come
+    // from the frame's size against the element's, and the renderer is given the horizontal one for the zoom
+    // and the pan, which takes the pixels to be square; WPF scales a display uniformly, so the two agree on
+    // every real one.
+    private (float Zoom, float OffsetX, float OffsetY, float ScaleX, float ScaleY, BackdropDots Backdrop) ViewFor(int width, int height)
     {
-        // SKElement builds a surface for each paint, so Paint is written for a canvas that arrives with no
-        // transform of its own and leaves its last one in place. A caller reusing one surface has to put it
-        // back into that state, or every paint inherits the scale of the one before it.
-        surface.Canvas.ResetMatrix();
-        Paint(this, new SKPaintSurfaceEventArgs(surface, info));
+        var scaleX = (float)(width / ActualWidth);
+        var scaleY = (float)(height / ActualHeight);
+        var backdrop = new BackdropDots(DotSpacing * scaleX, DotSpacing * scaleY,
+            DotOffset * scaleX, DotOffset * scaleY, DotRadius * scaleX);
+        return (Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, scaleX, scaleY, backdrop);
     }
 
-    private void Paint(object? sender, SKPaintSurfaceEventArgs args)
+    private void Paint(SKSurface surface, int width, int height)
     {
-        var canvas = args.Surface.Canvas;
+        var canvas = surface.Canvas;
         var measuring = MeasurePaints;
         var paintStarted = measuring ? Stopwatch.GetTimestamp() : 0;
         if (session == null || ActualWidth <= 0)
@@ -162,57 +257,31 @@ public sealed class HexCanvas : SKElement
             canvas.Clear(Paper);
             return;
         }
-        // Device pixels per unit of the canvas's own coordinates. The renderer is given the horizontal one
-        // for the zoom and the pan, which takes the pixels to be square; WPF scales a display uniformly, so
-        // the two agree on every real one.
-        var scaleX = (float)(args.Info.Width / ActualWidth);
-        var scaleY = (float)(args.Info.Height / ActualHeight);
-
-        // The dotted paper behind the canvas is drawn by the shader, as part of the one frame it draws.
-        // Four thousand little antialiased circles, one draw call each, cost 3.0 ms a frame at a window's
-        // size and 5.3 ms at a 4K display's, which was more than the artwork they sat behind.
-        var backdrop = new BackdropDots(DotSpacing * scaleX, DotSpacing * scaleY,
-            DotOffset * scaleX, DotOffset * scaleY, DotRadius * scaleX);
-        var afterBackdrop = measuring ? Stopwatch.GetTimestamp() : 0;
+        // The shader is the only thing that draws artwork, and the application refuses to start without it,
+        // so there is nothing to fall back to here and no case where carrying on would show anything.
+        var renderer = gpu ?? throw new InvalidOperationException("The canvas cannot draw: " + GpuHexRenderer.Unavailable);
+        var view = ViewFor(width, height);
 
         // Drained every frame whatever the zoom, so the raster never misses an edit made while it was not
         // the thing being drawn.
         artwork.MarkDirty(session.TakeDirtyCells());
-
-        // The shader is the only thing that draws artwork, and the application refuses to start without it,
-        // so there is nothing to fall back to here and no case where carrying on would show anything. The
-        // renderer is already built by the time the first frame arrives; this is only how the canvas reaches
-        // it, and it throws rather than leaving an empty canvas behind if it ever does not.
-        gpu ??= GpuHexRenderer.Shared(App.Log.Write)
-            ?? throw new InvalidOperationException("The canvas cannot draw: " + GpuHexRenderer.Unavailable);
 
         // The selection and the rectangle being dragged out are drawn by the same shader as the artwork,
         // from a mask of their own. Both cover areas rather than outlines, and an area on this canvas can be
         // two million cells, which is more than any per-cell drawing can keep up with.
         selectionMask.Refresh(session.Document, session.Selection);
 
-        // One shaded rectangle covering the window, drawn at device resolution so it stays crisp on a
-        // scaled display, and read straight into this surface's own pixels. Straight into them because the
-        // frame covers every pixel: the shader draws the paper as well as the canvas, so there is nothing
-        // underneath for a blend to reveal. Drawing it as a bitmap instead copied the frame a second time,
-        // which cost more than everything else in the frame put together on a large display.
-        using var pixels = args.Surface.PeekPixels();
-        var intoSurface = pixels != null && pixels.Width == args.Info.Width && pixels.Height == args.Info.Height;
-        if (intoSurface)
-            gpu.RenderInto(pixels!, session.Document, artwork,
-                Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid, selectionMask, RectangleBeingDragged(), backdrop);
+        // One shaded rectangle covering the surface, drawn at device resolution so it stays crisp on a
+        // scaled display, and covering every pixel: the shader draws the paper as well as the canvas, so
+        // the surface needs no clearing and nothing is left over from the frame before.
+        renderer.Draw(canvas, width, height, session.Document, artwork,
+            view.Zoom, view.OffsetX, view.OffsetY, ShowGrid, selectionMask, RectangleBeingDragged(), view.Backdrop);
         var afterArtwork = measuring ? Stopwatch.GetTimestamp() : 0;
-        if (!intoSurface)
-        {
-            // A surface that will not lend out its pixels, which no surface the editor draws into does.
-            // Kept because the alternative is a canvas with nothing in it.
-            var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
-                Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid, selectionMask, RectangleBeingDragged(), backdrop);
-            canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
-        }
-        var afterBlit = measuring ? Stopwatch.GetTimestamp() : 0;
 
-        canvas.Scale(scaleX, scaleY);
+        // The overlays are drawn in the canvas's own coordinates, and the transform is put back afterwards so
+        // that a surface painted twice does not inherit the first paint's scale.
+        var saved = canvas.Save();
+        canvas.Scale(view.ScaleX, view.ScaleY);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
         using var path = CanvasGeometry.Hexagon(session.Document.Orientation, CanvasGeometry.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
@@ -246,12 +315,82 @@ public sealed class HexCanvas : SKElement
             outline.Color = session.CanPaint ? new SKColor(31, 31, 31) : new SKColor(196, 43, 28);
             foreach (var cell in hover.Value.Disk(Tool is DrawingTool.Pencil or DrawingTool.Eraser ? BrushRadius : 0)) Highlight(cell, false, true);
         }
+        canvas.RestoreToCount(saved);
+        // Handed to the GPU here, because for the element's own frame nothing after this point may touch the
+        // framebuffer: GLWpfControl gives the surface back to Direct3D as soon as the frame returns.
+        renderer.Context.Flush();
+        var afterOverlays = measuring ? Stopwatch.GetTimestamp() : 0;
         if (measuring)
+        {
+            // Waiting for the GPU is what makes the figure a frame's cost rather than the cost of asking for
+            // one. The window never waits: the compositor picks the frame up when it is done.
+            renderer.Finish();
             LastPaintTimings = new PaintTimings(
-                Milliseconds(paintStarted, afterBackdrop),
-                Milliseconds(afterBackdrop, afterArtwork),
-                Milliseconds(afterArtwork, afterBlit),
-                Milliseconds(afterBlit, Stopwatch.GetTimestamp()));
+                Milliseconds(paintStarted, afterArtwork),
+                Milliseconds(afterArtwork, afterOverlays),
+                Milliseconds(afterOverlays, Stopwatch.GetTimestamp()));
+        }
+    }
+
+    private bool compareNextFrame;
+
+    /// <summary>
+    /// Asks for the next frame the element draws into its own framebuffer to be read back and compared, pixel
+    /// for pixel, with the renderer's offscreen frame of the same view. The result lands in
+    /// <see cref="FrameComparison"/>. For the checks, which otherwise verify the shader only through the
+    /// offscreen surface and would not notice the window's own surface disagreeing with it.
+    /// </summary>
+    public void CompareNextFrame() => compareNextFrame = true;
+
+    /// <summary>
+    /// How the window's last compared frame stood against the renderer's: the pixels counted, how many
+    /// differed, and the first few differences. Null until a frame has been compared.
+    /// </summary>
+    public (long Pixels, long Differing, IReadOnlyList<string> Differences)? FrameComparison { get; private set; }
+
+    /// <summary>The two frames of the last comparison, for a check that wants to keep a picture of them.</summary>
+    public (SKBitmap Window, SKBitmap Renderer)? ComparedFrames { get; private set; }
+
+    // Reads the frame the element drew, while the framebuffer is still the element's to read, and renders the
+    // same view through the renderer's offscreen path. The two are drawn by one shader with one set of
+    // uniforms into surfaces of two different formats and origins, so the comparison is of the surfaces,
+    // which is the part nothing else checks. The cursor ring and the other overlays are left out of the
+    // window's frame by comparing only when none of them is being drawn, which is the caller's to arrange.
+    private (long Pixels, long Differing, IReadOnlyList<string> Differences) CompareFrame(SKSurface surface, int width, int height)
+    {
+        if (session == null || gpu == null) throw new InvalidOperationException("There is no frame to compare.");
+        var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+        var window = new SKBitmap(info);
+        if (!surface.ReadPixels(info, window.GetPixels(), window.RowBytes, 0, 0))
+            throw new InvalidOperationException("Could not read the window's frame back from its framebuffer.");
+        var view = ViewFor(width, height);
+        var rendered = gpu.Render(session.Document, artwork, width, height,
+            view.Zoom, view.OffsetX, view.OffsetY, ShowGrid, selectionMask, null, view.Backdrop);
+        var differing = 0L;
+        var differences = new List<string>();
+        var windowPixels = window.GetPixelSpan();
+        var renderedPixels = rendered.GetPixelSpan();
+        for (var y = 0; y < height; y++)
+        {
+            var windowRow = windowPixels.Slice(y * window.RowBytes, width * 4);
+            var renderedRow = renderedPixels.Slice(y * rendered.RowBytes, width * 4);
+            if (windowRow.SequenceEqual(renderedRow)) continue;
+            for (var x = 0; x < width; x++)
+            {
+                var a = windowRow.Slice(x * 4, 4);
+                var b = renderedRow.Slice(x * 4, 4);
+                if (a.SequenceEqual(b)) continue;
+                differing++;
+                if (differences.Count < 20)
+                    differences.Add($"at {x},{y} the window drew {ColorMath.Format(Bgra(a))} where the renderer drew {ColorMath.Format(Bgra(b))}");
+            }
+        }
+        ComparedFrames?.Window.Dispose();
+        ComparedFrames?.Renderer.Dispose();
+        ComparedFrames = (window, rendered.Copy() ?? throw new InvalidOperationException("Could not keep the renderer's frame."));
+        return ((long)width * height, differing, differences);
+
+        static uint Bgra(ReadOnlySpan<byte> pixel) => (uint)(pixel[3] << 24 | pixel[2] << 16 | pixel[1] << 8 | pixel[0]);
     }
 
     // The rectangle a drag is sketching out, for the shader to fill. Unclamped: the shader rejects cells

@@ -73,6 +73,7 @@ $expected = @(
     'Project save/load: passed',
     'Artwork rendering:',
     'Canvas surface:',
+    'Canvas frame:',
     'Menu bar and dialogs: passed',
     'Palette grid:',
     'Render scales:',

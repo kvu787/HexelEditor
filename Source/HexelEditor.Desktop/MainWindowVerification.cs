@@ -48,12 +48,12 @@ public partial class MainWindow
 
     // One frame from the editor's own renderer, as a bitmap the caller owns. This is the point of these
     // checks: the shader is the only thing that draws the canvas, so a check that drew the artwork any other
-    // way would be verifying something nobody sees. The renderer hands back the buffer it reads every frame
-    // into and goes on using it, so what a check keeps has to be a copy.
+    // way would be verifying something nobody sees. The renderer hands back the buffer it reads its offscreen
+    // frames into and goes on using it, so what a check keeps has to be a copy.
     private static SkiaSharp.SKBitmap RenderFrame(HexDocument document, ArtworkCache cache, int width, int height,
         float zoom, float offsetX, float offsetY)
     {
-        var renderer = GpuHexRenderer.Shared(App.Log.Write)
+        var renderer = GpuHexRenderer.Shared
             ?? throw new InvalidOperationException("There is no GPU renderer: " + GpuHexRenderer.Unavailable);
         var frame = renderer.Render(document, cache, width, height, zoom, offsetX, offsetY, grid: false);
         return frame.Copy() ?? throw new InvalidOperationException("Could not copy the rendered frame.");
@@ -470,8 +470,37 @@ public partial class MainWindow
                     $"A New canvas field accepts {box.MaxLength} characters, too few for {HexDocument.MaximumDimension}.");
     }
 
-    public void VerifyCanvasRendered()
+    // The window's own frame against the renderer's. Every other rendering check draws through the renderer
+    // into an offscreen surface and samples that, so none of them would notice the window's own surface --
+    // a GL framebuffer shared with Direct3D, in a different format and the other way up -- showing something
+    // else. So the canvas is made to draw a frame, reads it back while it still has it, and holds it to the
+    // offscreen one, pixel for pixel. Nothing is hovered or selected at this point, so the window's frame
+    // holds the renderer's output and nothing drawn over it.
+    //
+    // The frame is forced through the layout pass rather than through a bitmap of the tree: WPF runs a
+    // control's OnRender from the arrange that follows InvalidateVisual, so UpdateLayout is what makes the
+    // canvas draw, and a RenderTargetBitmap of the tree afterwards only shows what it drew.
+    public void VerifyCanvasRendered(string folder)
     {
         if (EditorCanvas.CanvasSize.Width <= 0 || EditorCanvas.CanvasSize.Height <= 0) throw new InvalidOperationException("The editor canvas did not render.");
+        EditorCanvas.CompareNextFrame();
+        EditorCanvas.InvalidateVisual();
+        UpdateLayout();
+        var comparison = EditorCanvas.FrameComparison
+            ?? throw new InvalidOperationException("The editor canvas drew no frame to compare with the renderer's.");
+        if (comparison.Differing > 0)
+        {
+            // Both frames are kept for whoever reads the failure, because a count says little about what
+            // kind of difference it was.
+            if (EditorCanvas.ComparedFrames is { } frames)
+            {
+                using (var file = File.Create(System.IO.Path.Combine(folder, "WindowFrame.png"))) frames.Window.Encode(file, SkiaSharp.SKEncodedImageFormat.Png, 100);
+                using (var file = File.Create(System.IO.Path.Combine(folder, "RendererFrame.png"))) frames.Renderer.Encode(file, SkiaSharp.SKEncodedImageFormat.Png, 100);
+            }
+            throw new InvalidDataException(
+                $"The window's frame differs from the renderer's in {comparison.Differing:N0} of {comparison.Pixels:N0} pixels: {string.Join("; ", comparison.Differences)}.");
+        }
+        File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
+            $"Canvas frame: the window's own {EditorCanvas.CanvasSize.Width:0} x {EditorCanvas.CanvasSize.Height:0} frame matched the renderer's in all {comparison.Pixels:N0} pixels\n");
     }
 }

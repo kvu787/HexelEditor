@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using HexelEditor.Core;
 using OpenTK.Graphics.OpenGL4;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
 using SkiaSharp;
 
 namespace HexelEditor.Desktop;
@@ -21,20 +19,22 @@ namespace HexelEditor.Desktop;
 // A hex grid is a regular tiling, so "which cell is this point in" is closed-form arithmetic --
 // HexGeometry.FromPoint, written as SkSL. That turns the frame into one rectangle and a per-pixel
 // calculation, which costs what the window costs and nothing at all for the canvas behind it.
-// Measured the same way: 0.04 ms to draw and 1.3 ms to read back, flat at every zoom.
 //
-// Why read back rather than present the GPU surface directly: SKElement hands WPF a bitmap, and
-// the verification harness captures the window with RenderTargetBitmap, which cannot see GPU
-// content at all. Reading the pixels into a bitmap keeps one rendering path for the real window
-// and for the headless checks, and 1.3 ms is affordable where 133 ms was not. It is also what
-// lets the checks sample a frame of the real thing rather than of some stand-in.
+// Where the frame goes: straight into the framebuffer the canvas element shows, which WPF composites
+// as a Direct3D surface. There is no reading back. The first GPU renderer drew into a surface of its
+// own and read every frame back to the processor for a bitmap element to show, which cost 1.14 ms at
+// a window's size and 3.70 ms at a 4K display's -- the whole of a frame once everything else had been
+// taken out of it. The checks that sample pixels still need a bitmap, and get one from Render, which
+// draws through the same Draw into an offscreen surface of this context and reads that back. The
+// shader, its textures and its uniforms are the same either way; only the surface differs.
 //
-// Why everything GL happens on a thread of its own: the first version created the context on
-// WPF's UI thread, and the real window then never painted at all -- not just the canvas, the
-// whole window, toolbar included -- while the headless checks still passed. Owning a GL context
-// and a GLFW window on the thread running WPF's dispatcher is not worth diagnosing when it can
-// simply be kept away from it. The UI thread blocks for the millisecond or two a frame takes,
-// which is far less than the renderer this replaced.
+// Whose GL context this is: the canvas element's, on the interface thread. GLWpfControl creates one
+// GLFW window for the process and keeps its context current on that thread, and GLFW allows windows
+// only from the thread that first made one, so a renderer with a thread and a context of its own
+// cannot coexist with the element -- which is what the attempt to adopt the element found. So this
+// owns no context and no thread: it is built by the first canvas once the element's context exists,
+// and everything here runs on the thread that calls it, with that context current. Nothing else in
+// the process uses GL, so nothing ever makes a different context current behind it.
 public sealed class GpuHexRenderer : IDisposable
 {
     // Cells smaller than this cannot show their own shape, and the grid becomes a grey wash.
@@ -45,25 +45,9 @@ public sealed class GpuHexRenderer : IDisposable
     private const float SelectionFillAlpha = 40f / 255f;
     private const float SelectionLinePixels = 1.4f;
 
-    private readonly Thread thread;
-    // Which device the context landed on is worth having in the log. A machine with both an integrated and
-    // a discrete GPU gives the driver the choice, and the two differ by more than speed: reading a frame
-    // back from a discrete GPU crosses the bus, and from an integrated one it does not.
-    private Action<string>? log;
-    private readonly SemaphoreSlim wanted = new(0);
-    private readonly SemaphoreSlim finished = new(0);
-    private readonly SemaphoreSlim ready = new(0);
-    private volatile bool running = true;
-    private string? startupFailure;
-
-    // Owned by the render thread.
-    private NativeWindow? window;
-    private GRGlInterface? glInterface;
-    private GRContext? context;
-    private SKRuntimeEffect? effect;
-    private SKSurface? surface;
-    private int surfaceWidth, surfaceHeight;
-    private SKBitmap? readback;
+    private readonly GRGlInterface glInterface;
+    private readonly GRContext context;
+    private readonly SKRuntimeEffect effect;
     private MirroredTexture? colours;
     private ArtworkCache? colourSource;
     private int colourVersion = -1;
@@ -76,15 +60,19 @@ public sealed class GpuHexRenderer : IDisposable
     // Bound when nothing is selected. A runtime effect's child shader has to be bound whether the frame
     // reads from it or not, and one texel is the cheapest thing to bind.
     private SKImage? noSelection;
+    // The surface Render draws into and the bitmap it reads that into, kept across calls at one size.
+    private SKSurface? offscreen;
+    private int offscreenWidth, offscreenHeight;
+    private SKBitmap? readback;
 
     /// <summary>
     /// What one frame spent, in milliseconds, split into the parts that behave differently: recompositing the
-    /// cells that changed, uploading the colour texture, recording the draw, the GPU running it, and reading
-    /// the result back. Only filled while <see cref="MeasureFrames"/> is set.
+    /// cells that changed, uploading the colour texture, recording the draw, and the GPU running it. Only
+    /// filled while <see cref="MeasureFrames"/> is set.
     /// </summary>
-    public readonly record struct FrameTimings(double Composite, double Upload, double Submit, double Gpu, double Readback)
+    public readonly record struct FrameTimings(double Composite, double Upload, double Submit, double Gpu)
     {
-        public double Total => Composite + Upload + Submit + Gpu + Readback;
+        public double Total => Composite + Upload + Submit + Gpu;
     }
 
     /// <summary>
@@ -99,205 +87,142 @@ public sealed class GpuHexRenderer : IDisposable
 
     private static double Milliseconds(long from, long to) => (to - from) * 1000.0 / Stopwatch.Frequency;
 
-    // The one request in flight. The caller blocks until it is answered, so a single slot is all
-    // that is ever needed, and the two semaphores are all the synchronisation there has to be.
-    private HexDocument? askDocument;
-    private ArtworkCache? askCache;
-    private SelectionMask? askSelection;
-    private RectanglePreview? askPreview;
-    private BackdropDots? askBackdrop;
-    private (SKImageInfo Info, IntPtr Pixels, int RowBytes)? askDestination;
-    private int askWidth, askHeight;
-    private float askZoom, askOffsetX, askOffsetY;
-    private bool askGrid;
-    private SKBitmap? answer;
-    private Exception? failure;
-
-    private GpuHexRenderer()
-    {
-        thread = new Thread(Loop) { IsBackground = true, Name = "HexelGpuRenderer" };
-    }
-
-    private static GpuHexRenderer? shared;
-    private static bool attempted;
-
     /// <summary>
-    /// The renderer for this process, built on first use, or null when there is no usable GPU.
+    /// The renderer for this process, once a canvas has built it, or null before that and when there is no
+    /// usable GPU. The checks and the measurements draw through it; the canvas that built it draws through it
+    /// too.
     /// </summary>
     /// <remarks>
-    /// There can only ever be one. GLFW binds to the thread that first creates a window in the
-    /// process, and every renderer wants a thread of its own, so a second one fails with "Can
-    /// only create windows on the Glfw main thread" and takes the editor's only way of drawing
-    /// with it. That is a sharp edge to leave lying about, so the single instance is the public
-    /// way in and the constructor is not. Call from the UI thread.
+    /// There is one because there is one GL context: GLWpfControl shares a single context between every
+    /// element in the process, and a GRContext belongs to the GL context it was made on, so a second renderer
+    /// would be a second GRContext over the same GL state for no gain. Use from the interface thread only,
+    /// which is the thread the context is current on.
     /// </remarks>
-    public static GpuHexRenderer? Shared(Action<string>? log = null)
-    {
-        if (attempted) return shared;
-        attempted = true;
-        shared = TryCreate(log);
-        return shared;
-    }
+    public static GpuHexRenderer? Shared { get; private set; }
 
-    /// <summary>Why there is no renderer, once <see cref="Shared"/> has returned null.</summary>
+    /// <summary>Why there is no renderer, once <see cref="Open"/> has returned null.</summary>
     public static string? Unavailable { get; private set; }
 
-    /// <summary>Releases the process's renderer. For application shutdown.</summary>
-    public static void DisposeShared()
-    {
-        shared?.Dispose();
-        shared = null;
-    }
+    /// <summary>The GPU context frames are drawn with. For surfaces a caller wants to paint a frame into.</summary>
+    public GRContext Context => context;
 
-    private static GpuHexRenderer? TryCreate(Action<string>? log)
+    /// <summary>
+    /// Opens the element's GL context and returns the process's renderer over it, building the renderer the
+    /// first time. Null, with <see cref="Unavailable"/> set, when either part fails the first time; a later
+    /// failure, with a renderer already standing, is the caller's to deal with.
+    /// </summary>
+    /// <param name="openContext">
+    /// Starts the canvas element, which is what creates the GL context or joins the shared one. Called first,
+    /// so that the renderer is built with a context current.
+    /// </param>
+    internal static GpuHexRenderer? Open(Action openContext, Action<string> log)
     {
-        var renderer = new GpuHexRenderer { log = log };
-        renderer.thread.Start();
-        // Creating the context is the slow part. A machine without a GPU usually fails quickly; one that
-        // hangs here is given up on rather than left to hold the editor behind it.
-        if (!renderer.ready.Wait(TimeSpan.FromSeconds(10)))
-        {
-            Unavailable = "The GPU renderer timed out starting up.";
-            log?.Invoke(Unavailable);
-            renderer.running = false;
-            return null;
-        }
-        if (renderer.startupFailure != null) { Unavailable = renderer.startupFailure; log?.Invoke(Unavailable); return null; }
-        log?.Invoke("GPU renderer ready.");
-        return renderer;
-    }
-
-    private void Loop()
-    {
+        if (Unavailable != null) return null;
         try
         {
-            // Hidden, unfocused and never pumped: it exists only to own a GL context.
-            window = new NativeWindow(new NativeWindowSettings
-            {
-                Size = new OpenTK.Mathematics.Vector2i(16, 16),
-                StartVisible = false,
-                StartFocused = false,
-                WindowBorder = WindowBorder.Hidden,
-                APIVersion = new Version(3, 3),
-                Profile = ContextProfile.Core,
-            });
-            window.Context.MakeCurrent();
-            glInterface = GRGlInterface.Create() ?? throw new InvalidOperationException("No GL interface.");
-            context = GRContext.CreateGl(glInterface) ?? throw new InvalidOperationException("No GL context.");
-            effect = SKRuntimeEffect.CreateShader(Sksl, out var errors)
-                ?? throw new InvalidOperationException("Shader failed to compile: " + errors);
-            log?.Invoke($"GPU renderer device: {GL.GetString(StringName.Renderer)} / {GL.GetString(StringName.Vendor)} / OpenGL {GL.GetString(StringName.Version)}.");
+            openContext();
+            return Shared ??= new GpuHexRenderer(log);
         }
-        catch (Exception error)
+        catch (Exception error) when (Shared == null)
         {
-            startupFailure = "GPU renderer unavailable: " + error.Message;
-            Release();
-            ready.Release();
-            return;
+            Unavailable = "GPU renderer unavailable: " + error.Message;
+            log(Unavailable);
+            return null;
         }
-        ready.Release();
+    }
 
-        while (true)
-        {
-            wanted.Wait();
-            if (!running) break;
-            // Carried back rather than swallowed: whatever went wrong on this thread is the only account of
-            // it there is, and the caller has no second renderer to turn to.
-            try { answer = RenderCore(); failure = null; }
-            catch (Exception error) { answer = null; failure = error; }
-            finished.Release();
-        }
-        Release();
+    /// <summary>Releases the process's renderer. For application shutdown, on the interface thread.</summary>
+    public static void DisposeShared()
+    {
+        Shared?.Dispose();
+        Shared = null;
+    }
+
+    private GpuHexRenderer(Action<string> log)
+    {
+        glInterface = GRGlInterface.Create() ?? throw new InvalidOperationException("No GL interface.");
+        context = GRContext.CreateGl(glInterface) ?? throw new InvalidOperationException("No GL context.");
+        effect = SKRuntimeEffect.CreateShader(Sksl, out var errors)
+            ?? throw new InvalidOperationException("Shader failed to compile: " + errors);
+        // Which device the context landed on is worth having in the log. A machine with both an integrated
+        // and a discrete GPU gives the driver the choice, and the two differ by more than speed.
+        log($"GPU renderer device: {GL.GetString(StringName.Renderer)} / {GL.GetString(StringName.Vendor)} / OpenGL {GL.GetString(StringName.Version)}.");
+        log("GPU renderer ready.");
     }
 
     /// <summary>
-    /// Renders the artwork at device scale and returns a bitmap the caller draws at 1:1. Cells outside the
-    /// canvas come back transparent.
+    /// A GPU surface of this context at the given size, for a caller that wants to paint whole frames
+    /// somewhere other than the window. Measurement paints into one; the window paints into its own.
     /// </summary>
     /// <remarks>
-    /// There is no other renderer, so a frame that cannot be produced throws instead of coming back empty.
-    /// Returning nothing would leave the editor showing a canvas with no artwork in it and no account of
-    /// why, which is a worse answer than stopping.
+    /// The origin is GL's, bottom left, because that is the origin of the window's framebuffer, and the two
+    /// have to be drawn the same way for a frame drawn into one to match a frame drawn into the other. The
+    /// shader is the same either way, but Skia plumbs the pixel's coordinates into it differently for the
+    /// two origins, and the driver then rounds the arithmetic differently: with one origin each, ten pixels
+    /// in eight hundred thousand landed on the other side of the grid line's edge. Reading pixels out of a
+    /// bottom-left surface still gives them the right way up.
+    /// </remarks>
+    public SKSurface CreateSurface(int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(width), $"A surface of {width} by {height} has no pixels.");
+        return SKSurface.Create(context, budgeted: true,
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul), sampleCount: 0, GRSurfaceOrigin.BottomLeft)
+            ?? throw new InvalidOperationException($"Could not create a {width} by {height} GPU surface.");
+    }
+
+    /// <summary>
+    /// Renders the artwork at device scale into a bitmap the caller reads and does not keep: the next call
+    /// writes over it. Cells outside the canvas come back transparent unless a backdrop is asked for.
+    /// </summary>
+    /// <remarks>
+    /// This is the frame as pixels, for the checks that sample them. It is <see cref="Draw"/> into an
+    /// offscreen surface of this context, read back once it is drawn. Reading back is the cost the window
+    /// no longer pays, and it is paid here only by a caller that wants pixels on the processor.
     /// </remarks>
     public SKBitmap Render(HexDocument document, ArtworkCache cache, int width, int height,
         float zoom, float offsetX, float offsetY, bool grid,
         SelectionMask? selection = null, RectanglePreview? preview = null, BackdropDots? backdrop = null)
     {
-        Ask(document, cache, width, height, zoom, offsetX, offsetY, grid, selection, preview, backdrop, null);
-        return answer ?? throw new InvalidOperationException("The GPU renderer produced no frame.");
+        if (offscreen == null || offscreenWidth != width || offscreenHeight != height)
+        {
+            offscreen?.Dispose();
+            readback?.Dispose();
+            readback = null;
+            offscreen = CreateSurface(width, height);
+            offscreenWidth = width;
+            offscreenHeight = height;
+        }
+        Draw(offscreen.Canvas, width, height, document, cache, zoom, offsetX, offsetY, grid, selection, preview, backdrop);
+        readback ??= new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+        if (!offscreen.ReadPixels(readback.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
+            throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
+        return readback;
     }
 
     /// <summary>
-    /// Draws a frame straight into pixels the caller owns, which is how the window takes one.
+    /// Draws one frame over the whole of a canvas of this context: the artwork, the grid, the selection and
+    /// the rectangle being dragged out, and the paper behind them when a backdrop is given. Every pixel of
+    /// the frame is written, so nothing needs clearing first. The work is flushed to the GPU before this
+    /// returns; it is not waited for.
     /// </summary>
     /// <remarks>
-    /// The frame used to be read into a bitmap of the renderer's own and then drawn onto the window's
-    /// surface, which copied every pixel a second time: 4.4 ms at a window's size and 14.7 ms at a 4K
-    /// display's, around a draw costing 0.16 ms. Reading it where it is wanted removes that copy. It works
-    /// because the frame is opaque everywhere once the shader draws the backdrop too, so there is nothing
-    /// underneath it left to show through.
+    /// There is no other renderer, so a frame that cannot be produced throws instead of drawing nothing.
+    /// Drawing nothing would leave the editor showing a canvas with no artwork in it and no account of why,
+    /// which is a worse answer than stopping.
     /// </remarks>
-    public void RenderInto(SKPixmap destination, HexDocument document, ArtworkCache cache,
+    public void Draw(SKCanvas canvas, int width, int height, HexDocument document, ArtworkCache cache,
         float zoom, float offsetX, float offsetY, bool grid,
         SelectionMask? selection = null, RectanglePreview? preview = null, BackdropDots? backdrop = null)
     {
-        ArgumentNullException.ThrowIfNull(destination);
-        Ask(document, cache, destination.Width, destination.Height, zoom, offsetX, offsetY, grid,
-            selection, preview, backdrop, (destination.Info, destination.GetPixels(), destination.RowBytes));
-    }
-
-    private void Ask(HexDocument document, ArtworkCache cache, int width, int height,
-        float zoom, float offsetX, float offsetY, bool grid,
-        SelectionMask? selection, RectanglePreview? preview, BackdropDots? backdrop,
-        (SKImageInfo Info, IntPtr Pixels, int RowBytes)? destination)
-    {
+        ArgumentNullException.ThrowIfNull(canvas);
         if (width <= 0 || height <= 0)
             throw new ArgumentOutOfRangeException(nameof(width), $"A frame of {width} by {height} has no pixels to draw.");
-        if (!running) throw new InvalidOperationException("The GPU renderer has stopped.");
-        askDocument = document; askCache = cache;
-        askSelection = selection; askPreview = preview; askBackdrop = backdrop;
-        askDestination = destination;
-        askWidth = width; askHeight = height;
-        askZoom = zoom; askOffsetX = offsetX; askOffsetY = offsetY; askGrid = grid;
-        wanted.Release();
-        // A frame is a millisecond or two. One that never comes back has left the GL thread somewhere this
-        // side cannot see into, so the renderer is finished rather than waited on again.
-        if (!finished.Wait(TimeSpan.FromSeconds(2)))
-        {
-            running = false;
-            throw new TimeoutException("A GPU frame did not come back within two seconds.");
-        }
-        if (failure != null)
-            throw new InvalidOperationException("The GPU renderer could not draw the canvas: " + failure.Message, failure);
-    }
 
-    private SKBitmap? RenderCore()
-    {
-        var document = askDocument!;
-        var cache = askCache!;
-        var selection = askSelection;
-        var preview = askPreview;
-        var backdrop = askBackdrop;
-        var destination = askDestination;
-        int width = askWidth, height = askHeight;
-        float zoom = askZoom, offsetX = askOffsetX, offsetY = askOffsetY;
-        var grid = askGrid;
-        if (surface == null || surfaceWidth != width || surfaceHeight != height)
-        {
-            surface?.Dispose();
-            readback?.Dispose();
-            readback = null;
-            var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
-            surface = SKSurface.Create(context!, budgeted: true, info, sampleCount: 0, GRSurfaceOrigin.TopLeft)
-                ?? throw new InvalidOperationException($"Could not create a {width} by {height} GPU surface.");
-            surfaceWidth = width;
-            surfaceHeight = height;
-        }
-
-        // Measured as five parts rather than one, because they answer to different things: compositing
+        // Measured as four parts rather than one, because they answer to different things: compositing
         // follows the cells that changed, uploading follows the canvas, recording the draw follows little,
-        // and the GPU's share and the read back both follow the window. One number for the frame hides
-        // which of them is the one worth going after.
+        // and the GPU's share follows the window. One number for the frame hides which of them is the one
+        // worth going after.
         var measuring = MeasureFrames;
         var frameStarted = measuring ? Stopwatch.GetTimestamp() : 0;
 
@@ -315,16 +240,16 @@ public sealed class GpuHexRenderer : IDisposable
         // the compositing step actually wrote.
         if (!ReferenceEquals(colourSource, cache))
         {
-            colourImage = colours.Update(context!, raster, null);
+            colourImage = colours.Update(context, raster, null);
             colourSource = cache;
             colourVersion = cache.Version;
         }
         else if (colourVersion != cache.Version)
         {
-            colourImage = colours.Update(context!, raster, cache.LastWritten);
+            colourImage = colours.Update(context, raster, cache.LastWritten);
             colourVersion = cache.Version;
         }
-        colourImage ??= colours.Update(context!, raster, null);
+        colourImage ??= colours.Update(context, raster, null);
         noSelection ??= OneTexel();
         var selectionRaster = selection?.Current;
         if (selectionRaster != null
@@ -346,7 +271,7 @@ public sealed class GpuHexRenderer : IDisposable
             SKShaderTileMode.Decal, SKShaderTileMode.Decal,
             new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None));
         var shownPreview = preview is { IsEmpty: false } ? preview.Value : RectanglePreview.Nothing;
-        using var uniforms = new SKRuntimeEffectUniforms(effect!)
+        using var uniforms = new SKRuntimeEffectUniforms(effect)
         {
             { "invScale", new[] { 1f / zoom, 1f / zoom } },
             { "pan", new[] { offsetX, offsetY } },
@@ -365,50 +290,50 @@ public sealed class GpuHexRenderer : IDisposable
             { "previewStrength", shownPreview.IsEmpty ? 0f : SelectionFillAlpha },
             { "previewBounds", new[] { (float)shownPreview.Left, shownPreview.Top, shownPreview.Right, (float)shownPreview.Bottom } },
             { "previewFilled", shownPreview.Filled ? 1f : 0f },
-            // The paper the canvas sits on. Drawn here so the frame has no transparent pixels left in it,
-            // which is what lets the window read it rather than blend it. Off for a caller that wants the
-            // artwork alone, which is what the checks ask for.
+            // The paper the canvas sits on. Drawn here so the frame has no transparent pixels left in it
+            // and nothing underneath it is needed. Off for a caller that wants the artwork alone, which is
+            // what the checks ask for.
             { "backdropStrength", backdrop.HasValue ? 1f : 0f },
             { "dotSpacing", new[] { backdrop?.SpacingX ?? 1f, backdrop?.SpacingY ?? 1f } },
             { "dotOffset", new[] { backdrop?.OffsetX ?? 0f, backdrop?.OffsetY ?? 0f } },
             { "dotRadius", backdrop?.Radius ?? 0f },
         };
-        using var children = new SKRuntimeEffectChildren(effect!)
+        using var children = new SKRuntimeEffectChildren(effect)
         {
             { "colours", child },
             { "selection", selectionChild },
         };
-        using var shader = effect!.ToShader(uniforms, children);
-        using var paint = new SKPaint { Shader = shader };
+        using var shader = effect.ToShader(uniforms, children);
+        // Written over whatever the surface held rather than blended onto it, which is what lets the frame
+        // skip clearing the surface first: outside the canvas the shader leaves transparent pixels when no
+        // backdrop is asked for, and those have to land as transparent, not as the previous frame.
+        using var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src };
 
-        surface.Canvas.Clear(SKColors.Transparent);
-        surface.Canvas.DrawRect(new SKRect(0, 0, width, height), paint);
+        canvas.DrawRect(new SKRect(0, 0, width, height), paint);
         var afterSubmit = measuring ? Stopwatch.GetTimestamp() : 0;
-        context!.Flush();
+        context.Flush();
         // Flushing hands the work over without waiting for it, so the time spent recording the draw says
         // nothing about what the GPU then does with it. Waiting here is the only way to tell the two apart,
         // and it is why measuring is not something to leave switched on.
-        if (measuring) GL.Finish();
-        var afterGpu = measuring ? Stopwatch.GetTimestamp() : 0;
-        if (destination is { } into)
-        {
-            if (!surface!.ReadPixels(into.Info, into.Pixels, into.RowBytes, 0, 0))
-                throw new InvalidOperationException("Could not read the rendered frame into the window's surface.");
-        }
-        else
-        {
-            readback ??= new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
-            if (!surface!.ReadPixels(readback.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
-                throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
-        }
         if (measuring)
+        {
+            GL.Finish();
             LastFrameTimings = new FrameTimings(
                 Milliseconds(frameStarted, afterComposite),
                 Milliseconds(afterComposite, afterUpload),
                 Milliseconds(afterUpload, afterSubmit),
-                Milliseconds(afterSubmit, afterGpu),
-                Milliseconds(afterGpu, Stopwatch.GetTimestamp()));
-        return destination == null ? readback : null;
+                Milliseconds(afterSubmit, Stopwatch.GetTimestamp()));
+        }
+    }
+
+    /// <summary>
+    /// Flushes everything drawn on this context and waits for the GPU to finish it. For measurement, which
+    /// wants a frame's cost to include the GPU's share rather than only the time it took to hand over.
+    /// </summary>
+    public void Finish()
+    {
+        context.Flush();
+        GL.Finish();
     }
 
     private static SKImage OneTexel()
@@ -418,29 +343,24 @@ public sealed class GpuHexRenderer : IDisposable
         return SKImage.FromBitmap(bitmap) ?? throw new InvalidOperationException("Could not create the empty selection texture.");
     }
 
-    private void Release()
+    public void Dispose()
     {
         colours?.Dispose();
         colours = null;
         colourImage = null;
         colourSource = null;
         selected?.Dispose();
+        selected = null;
         selectedSource = null;
         noSelection?.Dispose();
+        noSelection = null;
         readback?.Dispose();
-        surface?.Dispose();
-        effect?.Dispose();
-        context?.Dispose();
-        glInterface?.Dispose();
-        window?.Dispose();
-    }
-
-    public void Dispose()
-    {
-        if (!running) return;
-        running = false;
-        wanted.Release();
-        thread.Join(TimeSpan.FromSeconds(2));
+        readback = null;
+        offscreen?.Dispose();
+        offscreen = null;
+        effect.Dispose();
+        context.Dispose();
+        glInterface.Dispose();
     }
 
     // HexGeometry.FromPoint and HexGeometry.Center, written for the GPU. Both orientations are

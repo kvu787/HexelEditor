@@ -2,16 +2,22 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows10.0.26100": {
-      "SkiaSharp.Views.WPF": {
+      "OpenTK.GLWpfControl": {
+        "type": "Direct",
+        "requested": "[4.2.3, )",
+        "resolved": "4.2.3",
+        "contentHash": "VIq15MqeMB42v7cuoPcbHAFzdlOcN5DZEhguuQVdvZP0NlfajjaoVDqtP3koOWLs1how2YqCaVk1qIvsuRdQqQ==",
+        "dependencies": {
+          "OpenTK": "[4.3.0, 5.0.0)"
+        }
+      },
+      "SkiaSharp": {
         "type": "Direct",
         "requested": "[4.150.2, )",
         "resolved": "4.150.2",
-        "contentHash": "FltSZEhiSZ5pstuTYe5USUjciqUgdjBxJ3TWdLFRV5IDksd3NSSCsBAu2taW21McvVMw8Rj7T6/IE9WHM9KJog==",
+        "contentHash": "wqgea1WfyIPcXc8lnwdSKIAjoN2iXc9lDzzXgF5VuhxgcrtKN+eq3cajg0iQmmIM2KHZ3KN2bSRnyWXlNsRbtA==",
         "dependencies": {
-          "OpenTK": "4.3.0",
-          "OpenTK.GLWpfControl": "4.2.3",
-          "SkiaSharp": "4.150.2",
-          "SkiaSharp.Views.Desktop.Common": "4.150.2"
+          "SkiaSharp.NativeAssets.Win32": "4.150.2"
         }
       },
       "OpenTK": {
@@ -39,14 +45,6 @@
         "type": "Transitive",
         "resolved": "4.3.0",
         "contentHash": "Hu+4U+tvnQW++y8Gj4OggLVuhclLm1hVN9ZIc3e9d8uo15CWYOSycw+FQhaRH3aibFv1vFYgH+bMIHM509YwYg=="
-      },
-      "OpenTK.GLWpfControl": {
-        "type": "Transitive",
-        "resolved": "4.2.3",
-        "contentHash": "VIq15MqeMB42v7cuoPcbHAFzdlOcN5DZEhguuQVdvZP0NlfajjaoVDqtP3koOWLs1how2YqCaVk1qIvsuRdQqQ==",
-        "dependencies": {
-          "OpenTK": "[4.3.0, 5.0.0)"
-        }
       },
       "OpenTK.Graphics": {
         "type": "Transitive",
@@ -110,26 +108,10 @@
           "OpenTK.redist.glfw": "[3.3.0-pre20200830200122, 3.4.0-pre)"
         }
       },
-      "SkiaSharp": {
-        "type": "Transitive",
-        "resolved": "4.150.2",
-        "contentHash": "wqgea1WfyIPcXc8lnwdSKIAjoN2iXc9lDzzXgF5VuhxgcrtKN+eq3cajg0iQmmIM2KHZ3KN2bSRnyWXlNsRbtA==",
-        "dependencies": {
-          "SkiaSharp.NativeAssets.Win32": "4.150.2"
-        }
-      },
       "SkiaSharp.NativeAssets.Win32": {
         "type": "Transitive",
         "resolved": "4.150.2",
         "contentHash": "dqQklHclRdrFOfRYYsyyqV1rfbT4tFdKKhkt1t6mG/Py7Gxj54cXle8Gqg2h0jpz9rmknr97gnmcnjtrjEt/ig=="
-      },
-      "SkiaSharp.Views.Desktop.Common": {
-        "type": "Transitive",
-        "resolved": "4.150.2",
-        "contentHash": "WF0y14GTp4QFm2vHt8v6uGkBXF/M5TvxIjBAlCAVsABvsVijLzb1UXlsbBawHDazV9q1cYpITFrD31Wg7/S/HQ==",
-        "dependencies": {
-          "SkiaSharp": "4.150.2"
-        }
       },
       "hexeleditor.core": {
         "type": "Project"
