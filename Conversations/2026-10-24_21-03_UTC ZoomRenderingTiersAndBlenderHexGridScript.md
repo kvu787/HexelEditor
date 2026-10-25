@@ -975,3 +975,122 @@ is this conversation being recorded as per the agents.md
 ## Assistant
 
 Partly, and it had fallen behind -- caught up in this turn. Details in the reply.
+
+## User
+
+i updated agents.md. reread it.
+
+getting back to the original conversation:
+i am somewhat familiar with fragment shaders because of this gdshader i wrote: "C:\Users\k\Repository\SimplePaintShaders". that's really the only hands-on shader experience i have.
+i'm not really familiar with vertex shaders, because for the simple paint shader, i just wrote the part that received the face normal and computed what color a pixel should be.
+so, explain vertex shaders
+
+## Assistant
+
+### You have already been using one
+
+In `K01.gdshader` you start with:
+
+```glsl
+vec3 normal = normalize(NORMAL);
+```
+
+Where did `NORMAL` come from? Your mesh doesn't store a normal per pixel -- it stores one per **vertex**. The monkey head has maybe 500 of them, and it covers maybe 200,000 pixels on screen. Something had to turn 500 values into 200,000 values, transform them into view space, and hand each pixel its own.
+
+That something is a vertex shader. Godot wrote it for you, which is why you never had to think about it.
+
+You also have one written out explicitly, in `SchlickVertex.gdshader`.
+
+### The division of labour
+
+|              | Runs                  | Times, on your monkey | Answers                          |
+| ------------ | --------------------- | --------------------: | -------------------------------- |
+| `vertex()`   | once per vertex       |                  ~500 | where does this point land on screen |
+| `fragment()` | once per covered pixel |              ~200,000 | what colour is this pixel        |
+
+That 400:1 ratio is the entire reason the pipeline is split in two. Anything you can compute per vertex instead of per pixel is 400 times cheaper -- as long as you can tolerate the values being blended in between.
+
+### The handoff is interpolation
+
+A `varying` is the pipe between the two stages. The vertex shader writes it, the rasteriser blends it, the fragment shader reads it.
+
+The blending is weighted by how close the pixel is to each of the triangle's three corners -- barycentric interpolation. A pixel dead centre gets roughly a third from each corner; a pixel hugging one corner gets almost all of its value from that corner.
+
+This is why `NORMAL` varies smoothly across a face even though it's only stored at the corners, and it's why a low-poly sphere can look round instead of faceted. It is also the thing that `flat` turns **off** -- the qualifier from the hex grid discussion. `flat` says "don't blend, every pixel in this triangle gets the same value."
+
+### Godot hides the hard part
+
+In raw OpenGL, a vertex shader is mandatory and its one required job is to write `gl_Position` -- you do the model, view and projection matrix multiplies yourself.
+
+Godot's `vertex()` is not the whole stage. It's a hook in the middle of a vertex shader Godot already wrote. You get `VERTEX` and `NORMAL` in model space, you adjust them if you want, and Godot applies `MODELVIEW_MATRIX` and `PROJECTION_MATRIX` afterwards. Omit `vertex()` entirely and it still runs; you just didn't intervene.
+
+That's why your fragment-only shaders work: the stage was always there.
+
+### Read your own file
+
+`SchlickVertex.gdshader` is the canonical example, and it's yours:
+
+```glsl
+varying vec3 view_light_dir;          // the pipe
+
+void vertex() {
+    view_light_dir = (VIEW_MATRIX * vec4(WORLD_LIGHT_DIR, 0.0)).xyz;
+}
+
+void fragment() {
+    vec3 light = normalize(view_light_dir);
+    float facingRatio = clamp(dot(normalize(NORMAL), light), 0.0, 1.0);
+    ...
+}
+```
+
+Compare it to `GrayScale.gdshader`, which does the matrix multiply in the fragment stage:
+
+```glsl
+vec3 world_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+```
+
+Same idea, 200,000 matrix multiplies instead of 500. That's the optimization the comment in `SchlickVertex` is describing, and it's a real one.
+
+One honest caveat, since you're learning from it: `view_light_dir` comes out **identical at every vertex**, because `VIEW_MATRIX` and `WORLD_LIGHT_DIR` are both constant for the whole draw. So the interpolation does nothing, and the value could just as well be a `uniform` computed once in GDScript -- 1 multiply rather than 500. The saving over `GrayScale` is genuine; the vertex stage just isn't the cheapest place that particular value could live. It's a fine illustration of the mechanism regardless.
+
+### Something to run that makes it obvious
+
+```glsl
+shader_type spatial;
+render_mode unshaded;
+
+uniform float _AMPLITUDE = 0.1;
+uniform float _FREQUENCY = 4.0;
+
+varying float wave;
+
+void vertex() {
+    wave = sin(VERTEX.x * _FREQUENCY + TIME);
+    VERTEX.y += wave * _AMPLITUDE;          // actually moves the geometry
+}
+
+void fragment() {
+    ALBEDO = mix(vec3(0.1, 0.2, 0.8), vec3(1.0), wave * 0.5 + 0.5);
+}
+```
+
+Two things worth noticing. It **moves vertices**, which a fragment shader fundamentally cannot do -- by the time the fragment stage runs, the shape is already decided and rasterised. And it passes `wave` down the pipe, so you can see the interpolation: the colour bands are smooth even though `wave` was only computed at the corners.
+
+Typical uses are all variations on that: wind on foliage, waves on water, skinning a character to its skeleton, billboarding a sprite to face the camera, flattening geometry for a 2D view.
+
+### Why the hex grid one looked alien
+
+This is probably the real source of the friction.
+
+Almost every vertex shader you'll encounter **transforms geometry that already exists** -- a mesh was loaded, its vertices are sitting in a buffer, and the shader moves them around. That matches your model of a shader as something that receives data and processes it, which is exactly what your fragment shaders do.
+
+The hex grid vertex shader does something different: it **invents** the geometry. There is no mesh. It gets handed two loop counters and computes positions from arithmetic:
+
+```glsl
+int column = gl_InstanceID % uWidth;
+int row    = gl_InstanceID / uWidth;
+vec2 centre = /* computed from column and row */;
+```
+
+That's a legal but unusual thing for a vertex shader to do, and nothing in your Godot experience would have prepared you for it. Both are ordinary vertex shaders; one processes input, the other generates it.
