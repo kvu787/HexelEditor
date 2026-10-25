@@ -1630,3 +1630,48 @@ Leave them local for now.
 ## Assistant
 
 Left local. Nothing pushed; the three commits sit on `main`.
+
+## User
+
+anti-aliasing/smoothing still doesn't look as good as in blender. remove anti-aliasing/smoothing entirely from the app so we can focus on the simpler non-anti-aliased case.
+
+## Assistant
+
+Removed in `af3df25`.
+
+Gone: the Smooth checkbox, its View menu entry, the `A` shortcut, `HexCanvas.Antialias`,
+`GpuHexRenderer.Antialias`, the `taps` uniform and the four tap branch in the shader. The shader
+now takes one sample a pixel, and the grid line is a hard `step` rather than a `smoothstep`, so
+nothing in the cell path softens an edge.
+
+The display pass capture went from 170 distinct colours to 57, which is the smoothing leaving.
+Timings are unchanged within noise, 3.4 to 7.5 ms across the zoom ladder against 19 to 150 ms for
+the old CPU renderer.
+
+What I deliberately left antialiased: the cursor ring, the selection highlight and the background
+dots. Those are interface rather than canvas, and a stair-stepped cursor ring would be a worse
+editor rather than a simpler one. Say the word if you want those hard too.
+
+### Two things worth flagging
+
+**An intermittent validation failure that is probably not the code.** One run in six failed with
+"the cursor was confined to 1,1 2559,1439". That rectangle is the primary monitor, and the editor
+runs on NE18NZ2; the guard also flagged the full virtual desktop rect, which is the *unconfined*
+state, so it is watching something toggle the clip rather than the editor holding it. Five runs
+either side were clean. Most likely ordinary desktop activity during the run, but it is not
+proven, so it is written down rather than dismissed.
+
+**A stray editor and a clipped cursor, both mine to clean up.** A HexelEditor process from an
+earlier failed run was still alive and had been since 19:21, which made one validation run skip
+its display pass. The cursor was also left clipped to the primary display. Both are cleared: the
+process killed, the clip released with `ClipCursor(NULL)` back to the full desktop.
+
+### Validation
+
+`pwsh -File ./Scripts/Validate.ps1`, four consecutive clean runs after the cleanup:
+
+```
+[  ok  ] Build, tests and hidden-host verification
+[  ok  ] Display pass on NE18NZ2 - 3840 x 2400, 57 distinct colors
+[  ok  ] Did not disturb the machine
+```
