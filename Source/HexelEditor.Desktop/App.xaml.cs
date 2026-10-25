@@ -39,7 +39,13 @@ public partial class App : Application
         {
             Log.Write($"Unhandled dispatcher exception: {args.Exception}");
             args.Handled = true;
-            if (verifying || measuring)
+            // KeepFocusAway as well as the two headless modes, because a run placed on a display nobody is
+            // watching has nobody to answer a dialog either. Windows puts a message box where it likes and
+            // gives it the foreground, so a crash in such a run would reach across to whoever is using the
+            // machine -- which is the one thing every part of this is built not to do. Seen for real while
+            // trying the canvas on a different rendering element: the editor failed to build its window and
+            // put a box on the user's display.
+            if (verifying || measuring || KeepFocusAway)
             {
                 // Ends the process rather than asking WPF to shut down. A check that fails after driving the
                 // pointer has left the input system mid-gesture, and a shutdown from there has been seen to
@@ -76,6 +82,9 @@ public partial class App : Application
     {
         base.OnStartup(e);
         var placement = ParsePlacement(e.Args);
+        // Settled before anything is built, because what must not take the foreground includes the window's
+        // own construction: the editor focuses its canvas as it sets its first tool.
+        KeepFocusAway = placement != null;
         // The shader is the only thing that draws the canvas. Settled before there is a window, because the
         // alternative is an editor that opens, looks ordinary, and has nothing in the middle of it: the
         // failure belongs at the start where it can be read, not on the first frame where it cannot.
@@ -188,7 +197,6 @@ public partial class App : Application
             // No taskbar button means nothing to appear on the user's taskbar, and nothing to flash there if
             // the window is ever denied the foreground, which is how Windows answers a refused activation.
             window.ShowInTaskbar = false;
-            KeepFocusAway = true;
             window.SourceInitialized += (_, _) => Place(window, bounds);
         }
         window.Show();
