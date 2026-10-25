@@ -1,22 +1,25 @@
 # Performance hotspots
 
-All ten were measured, nine of them were removed, and the tenth is described at the end with what it would
-cost. The figures below are before and after, both from `Scripts/Measure.ps1`.
+All ten were measured and all ten were removed. The figures below are before and after, both from
+`Scripts/Measure.ps1`.
 
 The before figures come from one run, `LogOutput/Measurement_2026-10-25_10-01-10`; the after figures from
-the run taken once each change was in. Both with `pwsh -File ./Scripts/Measure.ps1`, which runs the editor in its measurement mode on a Win32 desktop of its
-own and times its own objects: the real renderer, the real canvas control, the real session and the real
-panels. Figures are medians in milliseconds over the run count the report states. Re-run the script to
-refresh them; the raw samples sit beside each report in `Measurement.json`.
+the run taken once each change was in, and the frame figures from `LogOutput/Measurement_2026-10-25_15-57-58`,
+taken once the readback was gone. All with `pwsh -File ./Scripts/Measure.ps1`, which runs the editor in its
+measurement mode on a Win32 desktop of its own and times its own objects: the real renderer, the real canvas
+control, the real session and the real panels. Figures are medians in milliseconds over the run count the
+report states. Re-run the script to refresh them; the raw samples sit beside each report in `Measurement.json`.
 
 One caveat on reading them: the machine belongs to someone who is using it, and a run taken while they are
 shows it. Medians move by several milliseconds between runs and the highest samples by far more. Where a
 figure here looks steadier than the run it came from, it is because the quiet runs and the busy ones agree
-on their lowest samples and disagree on everything else.
+on their lowest samples and disagree on everything else. The run the frame figures come from was a busy one
+on the processor -- its whole-canvas recomposite came back at 5.2 ms against 1.2 ms in the run before -- and
+a quiet one on the GPU, which is the part those figures are about.
 
 Machine: Intel Core Ultra 9 275HX, 64 GB DDR5-5600, NVIDIA GeForce RTX 5090 Laptop GPU. The OpenGL context
-lands on the discrete GPU over PCIe, which the session log records on every run. That matters: reading a
-frame back crosses the bus here, and would not on the integrated GPU.
+lands on the discrete GPU over PCIe, which the session log records on every run. That mattered while a frame
+was read back: reading it crossed the bus here, and would not have on the integrated GPU.
 
 What is measured and what is not: the editor's own per-frame work. Not the compositor, not the present, and
 not the wait for the display, because none of those can be measured on a desktop that is not being
@@ -30,7 +33,7 @@ about 8.4 ms before it misses one.
 | 1  | Selection highlights, a path a cell       |      2637 ms |  0.015 ms | a mask the shader reads, instead of a path a cell        |
 | 2  | Colour texture re-uploaded whole          |       9.2 ms |   0.08 ms | only the texels the edit wrote are sent                  |
 | 3  | Copying the frame onto the canvas surface |  4.4/14.7 ms |      0 ms | the frame is read straight into the surface's own pixels |
-| 4  | Reading the frame back from the GPU       | 1.14/3.70 ms | unchanged | still there; see "What is left" below                    |
+| 4  | Reading the frame back from the GPU       | 1.14/3.70 ms |      0 ms | the frame is drawn into the framebuffer WPF shows        |
 | 5  | Saving and loading a project              |   478/272 ms |  40/24 ms | a layer's cells go out and come back in one call         |
 | 6  | The dotted backdrop                       |   3.0/5.3 ms |      0 ms | the shader works the pattern out per pixel               |
 | 7  | Whole-canvas editing operations           |    29-160 ms |  12-57 ms | the undo record, the fill's neighbours, and four queries |
@@ -42,48 +45,68 @@ What that adds up to, for the things a person waits on, on a 2000 x 1000 canvas:
 
 | Interaction                      |   Before |   After |
 | -------------------------------- | -------: | ------: |
-| Paint one cell                   | 18.45 ms | 1.31 ms |
-| Drag the brush over 60 cells     | 18.33 ms | 1.44 ms |
-| Pan the canvas                   |  8.31 ms | 1.18 ms |
+| Paint one cell                   | 18.45 ms | 0.15 ms |
+| Drag the brush over 60 cells     | 18.33 ms | 0.36 ms |
+| Pan the canvas                   |  8.31 ms | 0.07 ms |
 | Undo a whole-canvas change       | 29.53 ms | 11.9 ms |
 | Hide or show a layer             | 29.79 ms | 11.9 ms |
-| A frame with everything selected |  2646 ms | 1.43 ms |
-| A frame while painting, at 4K    | 32.99 ms | 3.70 ms |
+| A frame with everything selected |  2646 ms | 0.08 ms |
+| A frame while painting, at 4K    | 32.99 ms | 0.18 ms |
 
-## What is left
+## The readback, and how it went
 
-**The frame is still read back from the GPU**: 1.14 ms at a window's size, 3.70 ms at the validation
-display's. It is now the whole of a frame -- everything around it costs less than a tenth of a millisecond --
-but a frame is 1.3 ms against the 8.4 ms a 119 Hz display allows, so the renderer is no longer what limits
-anything.
+**The frame used to be read back from the GPU**: 1.14 ms at a window's size, 3.70 ms at the validation
+display's, and once the other nine were gone it was the whole of a frame. It is gone now. A frame is
+0.05 ms on the example canvas, 0.08 ms on a two million cell canvas at a window's size, and 0.12 ms at the
+4K display's; the GPU's own share of those is 0.04 to 0.09 ms, and the rest is recording the draw.
 
-Removing it means `SKGLElement`. That was tried, and it cannot be done without dismantling the renderer's
-threading model first.
+| Frame                                | With the readback | Without |
+| ------------------------------------ | ----------------: | ------: |
+| Example canvas                       |           1.28 ms | 0.05 ms |
+| Large canvas, zoomed out             |           1.29 ms | 0.08 ms |
+| Large canvas at 4K                   |           4.04 ms | 0.12 ms |
+| Large canvas, one cell changed       |           1.31 ms | 0.12 ms |
+| Large canvas at 4K, one cell changed |           3.70 ms | 0.17 ms |
 
-`SKGLElement` derives from `GLWpfControl`, and `GLWpfControl` builds its context by creating an OpenTK
-**GLFW** window. `GpuHexRenderer` has already created one, on the render thread it owns, and GLFW allows
-windows only from the thread that first used it. So the element's constructor throws:
+Why it was there: the canvas was an `SKElement`, which hands WPF a bitmap on the processor, so a frame drawn
+on the GPU had to come back across the bus to reach it, and WPF then uploaded it again to show it. Why it
+could not simply be swapped for `SKGLElement`: that element gets its GL context by creating an OpenTK GLFW
+window on the interface thread, `GpuHexRenderer` had already created one on a thread of its own, and GLFW
+allows windows only from the thread that first made one, so the element's constructor threw and the window
+never opened. The two could not coexist.
 
-```
-GLFWException: Can only create windows on the Glfw main thread. (Thread from which Glfw was first created).
-   at OpenTK.Wpf.DxGlContext.GetOrCreateSharedOpenGLContext
-   at OpenTK.Wpf.GLWpfControl.Start
-   at SkiaSharp.Views.WPF.SKGLElement.Initialize
-```
+So the renderer's threading was dismantled rather than the element swapped. There is now one GL context in
+the process, created by the canvas element through `GLWpfControl` and current on the interface thread, and
+`GpuHexRenderer` owns no thread and no context of its own: the first canvas builds it over the element's
+context as soon as the element has started. `HexCanvas` extends `GLWpfControl` directly rather than
+`SKGLElement`, because `SKGLElement` builds a `GRContext` of its own on first paint and the renderer's
+textures have to live in the same one; the canvas wraps the element's framebuffer as a Skia surface of the
+renderer's context each frame and paints into that. The framebuffer is a Direct3D 9 surface shared with GL
+through `WGL_NV_DX_interop`, shown through a `D3DImage`, so the frame is drawn where it is shown.
 
-The canvas never gets built, so the window never opens. This is the same constraint `GpuHexRenderer.Shared`
-already records as its reason for being a singleton; what is new is that it applies to the WPF element too,
-because that element gets its context the same way.
+Three things this was expected to break, and what happened to each:
 
-The two cannot coexist, so removing the readback means there being one GL context, owned by the element, on
-the interface thread -- which is where this renderer's history records a context stopping the whole window
-from painting -- with the offscreen path the pixel-exact checks depend on rendered through it as well. That
-is a change to how the editor is put together rather than an optimisation, and it was not made.
+**The window painting at all.** The renderer's history recorded a GL context on the interface thread
+stopping the whole window from painting, toolbar included, and that was the reason for the thread. The
+record also says the failure was never cleanly isolated from a software-rendering experiment that was going
+on at the same time, and it was not real: the display pass puts the real window on NE18NZ2 at 3824 x 2392
+with 57 distinct colours, upright, with the grid and the paper, through a context on the interface thread.
 
-The question of whether `PrintWindow` can capture a surface composited through `D3DImage` was never reached,
-and remains unanswered.
+**The display pass capturing it.** `PrintWindow` with `PW_RENDERFULLCONTENT` captures the
+`D3DImage`-composited canvas as it captured the bitmap one. The same 57 colours.
 
-**The whole-canvas editing operations are still the slowest things here**: flood fill 57 ms, move a
+**The pixel-exact checks.** They sample frames from `GpuHexRenderer.Render`, which still exists and still
+reads back -- into an offscreen surface of the same context, through the same `Draw` the window uses, with
+the same shader, textures and uniforms. What differs is only the surface, so a new check holds the two
+surfaces together: `VerifyCanvasRendered` makes the canvas draw a frame into its own framebuffer, reads
+that frame back while the framebuffer is still the canvas's to read, and compares it with the renderer's
+offscreen frame of the same view, pixel for pixel. All 803,880 match. They did not at first: ten of them
+sat on the other side of the grid line's edge, because the framebuffer has GL's bottom-left origin and the
+offscreen surface had a top-left one, and Skia plumbs a pixel's coordinates into the shader differently for
+the two, which the driver then rounds differently at a `step` threshold. The offscreen surface now has the
+framebuffer's origin, and the check is exact.
+
+**The whole-canvas editing operations are now the slowest things here**: flood fill 57 ms, move a
 selection over the canvas 47 ms, clear every cell 24 ms, rotate 32 ms. All of them run on the thread handling
 input, with no feedback while they do. What is left in them is the per-cell work itself rather than anything
 around it.
@@ -95,14 +118,15 @@ with `glTexSubImage2D`, which is the direct way to say it, and it was fastest: 0
 the second version costs.
 
 It also left the real window blank -- not the canvas, the whole window, toolbar included -- while every
-headless check passed. That is the same failure this renderer's own header records from owning a GL context
-on the wrong thread, and it was found by the display pass on NE18NZ2 and nothing else. Bisecting put it on
+headless check passed. It was found by the display pass on NE18NZ2 and nothing else, and bisecting put it on
 that commit exactly.
 
 Raw GL calls into a context Skia is also driving are not worth what they cost here. The second version does
-the same work through a surface Skia owns, for 0.065 ms more a frame.
+the same work through a surface Skia owns, for 0.065 ms more a frame. The same rule now covers
+`GLWpfControl`, which binds its framebuffer and sets its viewport with GL calls of its own around every
+frame: the canvas tells Skia to assume nothing about the GL state before it draws.
 
-The second caution is from the `SKGLElement` attempt above. When the canvas failed to build, the editor's
+The second caution is from the first attempt at `SKGLElement`. When the canvas failed to build, the editor's
 unhandled-exception handler put a message box on whichever display Windows chose and gave it the foreground
 -- during a run launched with `--show-without-focus`, which exists precisely so that a run can share a desk
 with the person using it. A run nobody is watching has nobody to answer a dialog, so it now logs and exits
