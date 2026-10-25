@@ -99,10 +99,14 @@ public sealed class HexCanvas : SKElement
         var canvas = args.Surface.Canvas;
         canvas.Clear(new SKColor(243, 243, 243));
         if (session == null || ActualWidth <= 0) return;
-        var dpi = (float)(args.Info.Width / ActualWidth);
+        // Device pixels per unit of the canvas's own coordinates. The renderer is given the horizontal one
+        // for the zoom and the pan, which takes the pixels to be square; WPF scales a display uniformly, so
+        // the two agree on every real one.
+        var scaleX = (float)(args.Info.Width / ActualWidth);
+        var scaleY = (float)(args.Info.Height / ActualHeight);
 
         canvas.Save();
-        canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
+        canvas.Scale(scaleX, scaleY);
         using (var dot = new SKPaint { Color = new SKColor(222, 222, 222), IsAntialias = true })
             for (var y = 18; y < ActualHeight; y += 24)
                 for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
@@ -122,11 +126,11 @@ public sealed class HexCanvas : SKElement
         // The artwork is one shaded rectangle covering the window, drawn at device resolution so
         // it stays crisp on a scaled display, and blitted back at 1:1.
         var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
-            Zoom * dpi, offsetX * dpi, offsetY * dpi, ShowGrid);
+            Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid);
         // 1:1, so nearest sampling is both exact and the cheapest path.
         canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
 
-        canvas.Scale(dpi, (float)(args.Info.Height / ActualHeight));
+        canvas.Scale(scaleX, scaleY);
         canvas.Translate(offsetX, offsetY); canvas.Scale(Zoom);
         using var path = CanvasGeometry.Hexagon(session.Document.Orientation, CanvasGeometry.CellRadius * 0.96f);
         using var outline = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.4f / Zoom, Color = new SKColor(0, 95, 184) };
