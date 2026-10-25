@@ -198,25 +198,44 @@ public partial class MainWindow : Window
         foreach (FrameworkElement swatch in PalettePanel.Children) swatch.Height = side;
     }
 
+    // The swatches are kept and brought up to date, not built again. Building them was 256 buttons, each
+    // with a rectangle, a style, a tooltip and an automation name, and it ran on every colour picked and
+    // inside every panel refresh, so every undo paid for it too: 2.1 ms each time.
     private void RefreshPalette()
     {
-        PalettePanel.Children.Clear();
         PalettePanel.Columns = HexDocument.PaletteColumns;
         var side = SwatchSide;
-        foreach (var color in session.Document.Palette)
+        var palette = session.Document.Palette;
+        while (PalettePanel.Children.Count > palette.Count) PalettePanel.Children.RemoveAt(PalettePanel.Children.Count - 1);
+        while (PalettePanel.Children.Count < palette.Count) PalettePanel.Children.Add(NewSwatch(PalettePanel.Children.Count));
+        for (var index = 0; index < palette.Count; index++)
         {
-            var button = new Button
-            {
-                Content = new Rectangle { Fill = BrushFor(color) },
-                Style = swatchStyle,
-                Height = side,
-                Tag = color == EditorCanvas.ForegroundColor ? "Active" : null,
-                ToolTip = ColorMath.Format(color)
-            };
+            var color = palette[index];
+            var button = (Button)PalettePanel.Children[index];
+            button.Height = side;
+            button.Tag = color == EditorCanvas.ForegroundColor ? "Active" : null;
+            // The colour a swatch is showing, so that a refresh which changed nothing about it does no
+            // work: a palette rebuild usually only moves which one is active.
+            if (button.DataContext is uint showing && showing == color) continue;
+            button.DataContext = color;
+            ((Rectangle)button.Content).Fill = BrushFor(color);
+            button.ToolTip = ColorMath.Format(color);
             AutomationProperties.SetName(button, $"Color {ColorMath.Format(color)}");
-            button.Click += (_, _) => { SetColor(color); FocusCanvas(); };
-            PalettePanel.Children.Add(button);
         }
+    }
+
+    // A swatch knows where it sits rather than which colour it holds, so it goes on working when the
+    // palette beneath it changes.
+    private Button NewSwatch(int index)
+    {
+        var button = new Button { Content = new Rectangle(), Style = swatchStyle };
+        button.Click += (_, _) =>
+        {
+            var palette = session.Document.Palette;
+            if (index < palette.Count) SetColor(palette[index]);
+            FocusCanvas();
+        };
+        return button;
     }
 
     private void RefreshLayers()
