@@ -6,18 +6,18 @@ namespace HexelEditor.Desktop;
 
 // A raster of the composited artwork, one cell per two pixels, kept up to date as cells change.
 //
-// It exists for the zoomed-out case. Drawing two million hexagons into a window of under a million pixels is
-// work with nothing to show for it, and it is what made a large canvas lag: the cost belonged to the document
-// rather than to the view. Scaling a raster into place costs what the window costs, whatever the canvas is.
+// This is what GpuHexRenderer's shader reads: a cell's colour, at the cell's own place, in one texture. The
+// shader works out which cell a pixel falls in and fetches that cell's colour from here, so the compositing
+// of layers happens once when a cell changes rather than once per pixel per frame.
+//
+// Only the cells reported dirty are recomposited, which is why a brush stroke on a two million cell canvas
+// costs the handful of cells it touched. Panning and zooming change no cell at all, so they cost nothing
+// here and re-upload nothing.
 //
 // Two pixels per cell, not one, because alternate rows of a hex grid sit half a cell across. At one pixel per
 // cell that offset falls between two pixels and cannot be stored, so the raster would describe a rectangular
-// grid and the artwork would be drawn with its rows out of place. At two it is exactly one pixel, so the
-// raster holds the real geometry and can simply be scaled.
-//
-// A row is one pixel tall, so a cell's pixel is wider than it is tall by the ratio the grid itself has. The
-// destination rectangle carries that, which is why the mapping back to the artwork's own coordinates lives
-// here beside the layout rather than at the call.
+// grid and the artwork would be read with its rows out of place. At two it is exactly one pixel, so the
+// raster holds the real geometry and the shader can address it with whole texels.
 public sealed class ArtworkCache : IDisposable
 {
     private const int PixelsPerCell = 2;
@@ -29,10 +29,7 @@ public sealed class ArtworkCache : IDisposable
     private HexOrientation orientation;
     private bool everythingDirty;
 
-    // The raster covers the whole document, so it is addressed in columns and rows and scaled on the way out.
-    public SKBitmap? Raster => raster;
-
-    // Bumped whenever a cell's colour actually changed. A renderer holding a GPU copy of the
+    // Bumped whenever a cell's colour actually changed. The renderer holding a GPU copy of the
     // raster watches this so that panning and zooming, which change no cell, re-upload nothing.
     public int Version { get; private set; }
 
@@ -71,23 +68,6 @@ public sealed class ArtworkCache : IDisposable
         pendingMaxRow = -1;
         return raster!;
     }
-
-    // Where the raster's pixels sit in the artwork's own coordinates, so it can be drawn with one scaled blit.
-    // A cell spans a whole pitch across and a whole row pitch down, which is the band a row occupies rather
-    // than the full height of a hexagon: neighbouring rows interlock, and the bands are what tile the plane.
-    public SKRect DestinationFor(HexDocument document, float radius = CanvasGeometry.CellRadius)
-    {
-        var (across, down) = Pitches(document.Orientation, radius);
-        return document.Orientation == HexOrientation.PointyTop
-            ? new SKRect(-across / 2, -down / 2, across * document.Width, down * (document.Height - 0.5f))
-            : new SKRect(-across / 2, -down / 2, across * (document.Width - 0.5f), down * document.Height);
-    }
-
-    // The pitch between cells along each axis. The row axis is the one alternate rows are offset along.
-    private static (float Across, float Down) Pitches(HexOrientation orientation, float radius) =>
-        orientation == HexOrientation.PointyTop
-            ? ((float)(Math.Sqrt(3) * radius), 1.5f * radius)
-            : (1.5f * radius, (float)(Math.Sqrt(3) * radius));
 
     private void Allocate(HexDocument document)
     {
