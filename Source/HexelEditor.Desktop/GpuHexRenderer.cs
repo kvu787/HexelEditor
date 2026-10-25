@@ -105,6 +105,8 @@ public sealed class GpuHexRenderer : IDisposable
     private ArtworkCache? askCache;
     private SelectionMask? askSelection;
     private RectanglePreview? askPreview;
+    private BackdropDots? askBackdrop;
+    private (SKImageInfo Info, IntPtr Pixels, int RowBytes)? askDestination;
     private int askWidth, askHeight;
     private float askZoom, askOffsetX, askOffsetY;
     private bool askGrid;
@@ -219,13 +221,42 @@ public sealed class GpuHexRenderer : IDisposable
     /// </remarks>
     public SKBitmap Render(HexDocument document, ArtworkCache cache, int width, int height,
         float zoom, float offsetX, float offsetY, bool grid,
-        SelectionMask? selection = null, RectanglePreview? preview = null)
+        SelectionMask? selection = null, RectanglePreview? preview = null, BackdropDots? backdrop = null)
+    {
+        Ask(document, cache, width, height, zoom, offsetX, offsetY, grid, selection, preview, backdrop, null);
+        return answer ?? throw new InvalidOperationException("The GPU renderer produced no frame.");
+    }
+
+    /// <summary>
+    /// Draws a frame straight into pixels the caller owns, which is how the window takes one.
+    /// </summary>
+    /// <remarks>
+    /// The frame used to be read into a bitmap of the renderer's own and then drawn onto the window's
+    /// surface, which copied every pixel a second time: 4.4 ms at a window's size and 14.7 ms at a 4K
+    /// display's, around a draw costing 0.16 ms. Reading it where it is wanted removes that copy. It works
+    /// because the frame is opaque everywhere once the shader draws the backdrop too, so there is nothing
+    /// underneath it left to show through.
+    /// </remarks>
+    public void RenderInto(SKPixmap destination, HexDocument document, ArtworkCache cache,
+        float zoom, float offsetX, float offsetY, bool grid,
+        SelectionMask? selection = null, RectanglePreview? preview = null, BackdropDots? backdrop = null)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        Ask(document, cache, destination.Width, destination.Height, zoom, offsetX, offsetY, grid,
+            selection, preview, backdrop, (destination.Info, destination.GetPixels(), destination.RowBytes));
+    }
+
+    private void Ask(HexDocument document, ArtworkCache cache, int width, int height,
+        float zoom, float offsetX, float offsetY, bool grid,
+        SelectionMask? selection, RectanglePreview? preview, BackdropDots? backdrop,
+        (SKImageInfo Info, IntPtr Pixels, int RowBytes)? destination)
     {
         if (width <= 0 || height <= 0)
             throw new ArgumentOutOfRangeException(nameof(width), $"A frame of {width} by {height} has no pixels to draw.");
         if (!running) throw new InvalidOperationException("The GPU renderer has stopped.");
         askDocument = document; askCache = cache;
-        askSelection = selection; askPreview = preview;
+        askSelection = selection; askPreview = preview; askBackdrop = backdrop;
+        askDestination = destination;
         askWidth = width; askHeight = height;
         askZoom = zoom; askOffsetX = offsetX; askOffsetY = offsetY; askGrid = grid;
         wanted.Release();
@@ -238,15 +269,16 @@ public sealed class GpuHexRenderer : IDisposable
         }
         if (failure != null)
             throw new InvalidOperationException("The GPU renderer could not draw the canvas: " + failure.Message, failure);
-        return answer ?? throw new InvalidOperationException("The GPU renderer produced no frame.");
     }
 
-    private SKBitmap RenderCore()
+    private SKBitmap? RenderCore()
     {
         var document = askDocument!;
         var cache = askCache!;
         var selection = askSelection;
         var preview = askPreview;
+        var backdrop = askBackdrop;
+        var destination = askDestination;
         int width = askWidth, height = askHeight;
         float zoom = askZoom, offsetX = askOffsetX, offsetY = askOffsetY;
         var grid = askGrid;
@@ -254,10 +286,10 @@ public sealed class GpuHexRenderer : IDisposable
         {
             surface?.Dispose();
             readback?.Dispose();
+            readback = null;
             var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
             surface = SKSurface.Create(context!, budgeted: true, info, sampleCount: 0, GRSurfaceOrigin.TopLeft)
                 ?? throw new InvalidOperationException($"Could not create a {width} by {height} GPU surface.");
-            readback = new SKBitmap(info);
             surfaceWidth = width;
             surfaceHeight = height;
         }
@@ -333,6 +365,13 @@ public sealed class GpuHexRenderer : IDisposable
             { "previewStrength", shownPreview.IsEmpty ? 0f : SelectionFillAlpha },
             { "previewBounds", new[] { (float)shownPreview.Left, shownPreview.Top, shownPreview.Right, (float)shownPreview.Bottom } },
             { "previewFilled", shownPreview.Filled ? 1f : 0f },
+            // The paper the canvas sits on. Drawn here so the frame has no transparent pixels left in it,
+            // which is what lets the window read it rather than blend it. Off for a caller that wants the
+            // artwork alone, which is what the checks ask for.
+            { "backdropStrength", backdrop.HasValue ? 1f : 0f },
+            { "dotSpacing", new[] { backdrop?.SpacingX ?? 1f, backdrop?.SpacingY ?? 1f } },
+            { "dotOffset", new[] { backdrop?.OffsetX ?? 0f, backdrop?.OffsetY ?? 0f } },
+            { "dotRadius", backdrop?.Radius ?? 0f },
         };
         using var children = new SKRuntimeEffectChildren(effect!)
         {
@@ -351,8 +390,17 @@ public sealed class GpuHexRenderer : IDisposable
         // and it is why measuring is not something to leave switched on.
         if (measuring) GL.Finish();
         var afterGpu = measuring ? Stopwatch.GetTimestamp() : 0;
-        if (!surface!.ReadPixels(readback!.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
-            throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
+        if (destination is { } into)
+        {
+            if (!surface!.ReadPixels(into.Info, into.Pixels, into.RowBytes, 0, 0))
+                throw new InvalidOperationException("Could not read the rendered frame into the window's surface.");
+        }
+        else
+        {
+            readback ??= new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
+            if (!surface!.ReadPixels(readback.Info, readback.GetPixels(), readback.RowBytes, 0, 0))
+                throw new InvalidOperationException("Could not read the rendered frame back from the GPU.");
+        }
         if (measuring)
             LastFrameTimings = new FrameTimings(
                 Milliseconds(frameStarted, afterComposite),
@@ -360,7 +408,7 @@ public sealed class GpuHexRenderer : IDisposable
                 Milliseconds(afterUpload, afterSubmit),
                 Milliseconds(afterSubmit, afterGpu),
                 Milliseconds(afterGpu, Stopwatch.GetTimestamp()));
-        return readback;
+        return destination == null ? readback : null;
     }
 
     private static SKImage OneTexel()
@@ -413,11 +461,18 @@ uniform float  selectWidth;
 uniform float  previewStrength;
 uniform float4 previewBounds;
 uniform float  previewFilled;
+uniform float  backdropStrength;
+uniform float2 dotSpacing;
+uniform float2 dotOffset;
+uniform float  dotRadius;
 
 const float SQRT3 = 1.7320508;
 const float HALF_SQRT3 = 0.8660254;
 // The interface's blue, which the selection is filled and outlined with.
 const half3 SELECTION = half3(0.0, 0.372549, 0.721569);
+// The paper the canvas sits on, and the dots ruled across it.
+const half3 PAPER = half3(0.952941, 0.952941, 0.952941);
+const half3 DOTS = half3(0.870588, 0.870588, 0.870588);
 
 // Cube rounding: the nearest hex to a fractional axial coordinate. The three cube coordinates sum
 // to zero, so the one that moved furthest is recomputed from the other two.
@@ -490,7 +545,21 @@ half4 sampleOne(float2 w) {
 half4 main(float2 coord) {
     // One sample a pixel: a pixel takes the colour of whichever cell its centre lands in, and
     // cell edges come out hard. Nothing here softens them, by design.
-    return sampleOne((coord - pan) * invScale);
+    half4 cell = sampleOne((coord - pan) * invScale);
+    if (cell.a > 0.0 || backdropStrength < 0.5) { return cell; }
+
+    // Off the canvas: the dotted paper it sits on. Here rather than drawn underneath because a frame with
+    // nothing transparent in it can be read straight into the window's surface, and because a dot pattern
+    // worked out per pixel costs nothing next to four thousand little circles drawn one at a time.
+    float2 toNearestDot = abs(fract((coord - dotOffset) / dotSpacing + 0.5) - 0.5) * dotSpacing;
+    float ink = 1.0 - smoothstep(dotRadius - 0.5, dotRadius + 0.5, length(toNearestDot));
+    return half4(mix(PAPER, DOTS, half(ink)), 1.0);
 }
 """;
 }
+
+/// <summary>
+/// The dotted paper the canvas sits on, in device pixels: how far apart the dots are, where the first
+/// one sits, and how large it is.
+/// </summary>
+public readonly record struct BackdropDots(float SpacingX, float SpacingY, float OffsetX, float OffsetY, float Radius);

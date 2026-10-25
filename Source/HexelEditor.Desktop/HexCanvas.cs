@@ -14,6 +14,11 @@ public sealed class HexCanvas : SKElement
 {
     private const float MinimumZoom = 0.08f;
     private const float MaximumZoom = 30f;
+    // The dotted paper behind the canvas, in this control's own units.
+    private const float DotSpacing = 24f;
+    private const float DotOffset = 18f;
+    private const float DotRadius = 0.7f;
+    private static readonly SKColor Paper = new(243, 243, 243);
     private EditorSession? session;
     private readonly ArtworkCache artwork = new();
     private readonly SelectionMask selectionMask = new();
@@ -151,20 +156,23 @@ public sealed class HexCanvas : SKElement
         var canvas = args.Surface.Canvas;
         var measuring = MeasurePaints;
         var paintStarted = measuring ? Stopwatch.GetTimestamp() : 0;
-        canvas.Clear(new SKColor(243, 243, 243));
-        if (session == null || ActualWidth <= 0) return;
+        if (session == null || ActualWidth <= 0)
+        {
+            // Nothing to draw, so nothing has written over whatever the surface last held.
+            canvas.Clear(Paper);
+            return;
+        }
         // Device pixels per unit of the canvas's own coordinates. The renderer is given the horizontal one
         // for the zoom and the pan, which takes the pixels to be square; WPF scales a display uniformly, so
         // the two agree on every real one.
         var scaleX = (float)(args.Info.Width / ActualWidth);
         var scaleY = (float)(args.Info.Height / ActualHeight);
 
-        canvas.Save();
-        canvas.Scale(scaleX, scaleY);
-        using (var dot = new SKPaint { Color = new SKColor(222, 222, 222), IsAntialias = true })
-            for (var y = 18; y < ActualHeight; y += 24)
-                for (var x = 18; x < ActualWidth; x += 24) canvas.DrawCircle(x, y, 0.7f, dot);
-        canvas.Restore();
+        // The dotted paper behind the canvas is drawn by the shader, as part of the one frame it draws.
+        // Four thousand little antialiased circles, one draw call each, cost 3.0 ms a frame at a window's
+        // size and 5.3 ms at a 4K display's, which was more than the artwork they sat behind.
+        var backdrop = new BackdropDots(DotSpacing * scaleX, DotSpacing * scaleY,
+            DotOffset * scaleX, DotOffset * scaleY, DotRadius * scaleX);
         var afterBackdrop = measuring ? Stopwatch.GetTimestamp() : 0;
 
         // Drained every frame whatever the zoom, so the raster never misses an edit made while it was not
@@ -183,13 +191,25 @@ public sealed class HexCanvas : SKElement
         // two million cells, which is more than any per-cell drawing can keep up with.
         selectionMask.Refresh(session.Document, session.Selection);
 
-        // The artwork is one shaded rectangle covering the window, drawn at device resolution so
-        // it stays crisp on a scaled display, and blitted back at 1:1.
-        var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
-            Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid, selectionMask, RectangleBeingDragged());
+        // One shaded rectangle covering the window, drawn at device resolution so it stays crisp on a
+        // scaled display, and read straight into this surface's own pixels. Straight into them because the
+        // frame covers every pixel: the shader draws the paper as well as the canvas, so there is nothing
+        // underneath for a blend to reveal. Drawing it as a bitmap instead copied the frame a second time,
+        // which cost more than everything else in the frame put together on a large display.
+        using var pixels = args.Surface.PeekPixels();
+        var intoSurface = pixels != null && pixels.Width == args.Info.Width && pixels.Height == args.Info.Height;
+        if (intoSurface)
+            gpu.RenderInto(pixels!, session.Document, artwork,
+                Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid, selectionMask, RectangleBeingDragged(), backdrop);
         var afterArtwork = measuring ? Stopwatch.GetTimestamp() : 0;
-        // 1:1, so nearest sampling is both exact and the cheapest path.
-        canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
+        if (!intoSurface)
+        {
+            // A surface that will not lend out its pixels, which no surface the editor draws into does.
+            // Kept because the alternative is a canvas with nothing in it.
+            var rendered = gpu.Render(session.Document, artwork, args.Info.Width, args.Info.Height,
+                Zoom * scaleX, offsetX * scaleX, offsetY * scaleX, ShowGrid, selectionMask, RectangleBeingDragged(), backdrop);
+            canvas.DrawBitmap(rendered, 0, 0, new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None), null);
+        }
         var afterBlit = measuring ? Stopwatch.GetTimestamp() : 0;
 
         canvas.Scale(scaleX, scaleY);
