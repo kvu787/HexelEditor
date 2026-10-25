@@ -52,6 +52,9 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // The GL context, its thread and its GPU surfaces outlive every window, so the
+        // application is the only thing with the standing to let them go.
+        GpuHexRenderer.DisposeShared();
         try
         {
             base.OnExit(e);

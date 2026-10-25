@@ -70,8 +70,35 @@ public sealed class GpuHexRenderer : IDisposable
         thread = new Thread(Loop) { IsBackground = true, Name = "HexelGpuRenderer" };
     }
 
-    /// <summary>Builds the renderer, or returns null when this machine has no usable GPU.</summary>
-    public static GpuHexRenderer? TryCreate(Action<string>? log = null)
+    private static GpuHexRenderer? shared;
+    private static bool attempted;
+
+    /// <summary>
+    /// The renderer for this process, built on first use, or null when there is no usable GPU.
+    /// </summary>
+    /// <remarks>
+    /// There can only ever be one. GLFW binds to the thread that first creates a window in the
+    /// process, and every renderer wants a thread of its own, so a second one fails with "Can
+    /// only create windows on the Glfw main thread" and silently drops the editor onto the CPU
+    /// path for the rest of the session. That is a sharp edge to leave lying about, so the single
+    /// instance is the public way in and the constructor is not. Call from the UI thread.
+    /// </remarks>
+    public static GpuHexRenderer? Shared(Action<string>? log = null)
+    {
+        if (attempted) return shared;
+        attempted = true;
+        shared = TryCreate(log);
+        return shared;
+    }
+
+    /// <summary>Releases the process's renderer. For application shutdown.</summary>
+    public static void DisposeShared()
+    {
+        shared?.Dispose();
+        shared = null;
+    }
+
+    private static GpuHexRenderer? TryCreate(Action<string>? log)
     {
         var renderer = new GpuHexRenderer();
         renderer.thread.Start();

@@ -50,6 +50,10 @@ public sealed class HexCanvas : SKElement
         MouseLeave += (_, _) => { if (!drawing) { hover = null; InvalidateVisual(); } };
         LostMouseCapture += (_, _) => FinishGesture();
         SizeChanged += (_, _) => { if (needsFit && ActualWidth > 0 && ActualHeight > 0) Fit(); else InvalidateVisual(); };
+        // The raster holds its pixels in a pinned array, so it is worth releasing deliberately
+        // rather than leaving to the finalizer. ShutdownStarted fires once, unlike Unloaded,
+        // which also fires when a control is merely reparented.
+        Dispatcher.ShutdownStarted += (_, _) => artwork.Dispose();
         Cursor = Cursors.Cross;
     }
 
@@ -119,7 +123,7 @@ public sealed class HexCanvas : SKElement
             gpuAttempted = true;
             // A way out without a rebuild, for a machine where the GPU path misbehaves.
             if (Environment.GetEnvironmentVariable("HEXEL_DISABLE_GPU") != "1")
-                gpu = GpuHexRenderer.TryCreate(App.Log.Write);
+                gpu = GpuHexRenderer.Shared(App.Log.Write);
             else
                 App.Log.Write("GPU renderer disabled by HEXEL_DISABLE_GPU.");
         }
