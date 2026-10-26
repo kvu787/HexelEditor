@@ -32,8 +32,30 @@ public partial class MainWindow
         if (roundTrip.Layers.Count != 3 || roundTrip.CompositeAt(0) != session.Document.CompositeAt(0)) throw new InvalidDataException("Project round trip failed.");
         var cells = VerifyArtworkRendering(roundTrip);
         var surfaceCells = VerifyCanvasSurface();
+        var rasters = VerifyRendererFollowsTheRaster();
         EditorCanvas.Fit(); UpdateLayout();
-        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nArtwork rendering: all {cells} cell colors verified\nCanvas surface: background and seams verified across {surfaceCells} cells in both orientations\n");
+        File.WriteAllText(System.IO.Path.Combine(folder, "Verification.txt"), $"WPF commands and saved-state indicator: passed\nProject save/load: passed\nArtwork rendering: all {cells} cell colors verified\nCanvas surface: background and seams verified across {surfaceCells} cells in both orientations\nRenderer raster: {rasters} canvases of one size drawn in turn, each showing its own cells\n");
+    }
+
+    // The renderer keeps one GPU copy of the artwork raster and brings it up to date over the part that
+    // changed, so which raster it is a copy of is part of whether it is current. Three canvases of one size
+    // have rasters of one size, and a copy that took "the same size" for "the same raster" showed the first
+    // canvas's cells on the second. Each goes through a cache of its own, as a canvas the window has never
+    // drawn does, and has to come out as its own flat colour.
+    private static int VerifyRendererFollowsTheRaster()
+    {
+        var colors = new uint[] { 0xFF1E89DA, 0xFFD5236C, 0xFF2FC866 };
+        foreach (var color in colors)
+        {
+            var document = new HexDocument(6, 5);
+            Array.Fill(document.Layers[0].Cells, color);
+            using var bitmap = RenderArtwork(document, out var bounds);
+            var (x, y) = HexGeometry.Center(document.CoordinateAt(2 * document.Width + 3), document.Orientation, CanvasGeometry.CellRadius);
+            var sample = (uint)bitmap.GetPixel((int)Math.Round(x + 1 - bounds.Left), (int)Math.Round(y + 1 - bounds.Top));
+            if (sample != color)
+                throw new InvalidDataException($"A canvas the size of the one drawn before it came out {ColorMath.Format(sample)} where {ColorMath.Format(color)} belongs, so the renderer kept the earlier canvas's cells.");
+        }
+        return colors.Length;
     }
 
     // Draws a document the way the canvas draws it, one pixel per unit of artwork space, so a check can

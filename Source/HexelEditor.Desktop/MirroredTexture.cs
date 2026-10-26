@@ -23,8 +23,8 @@ internal sealed class MirroredTexture : IDisposable
     private int width, height;
 
     /// <summary>
-    /// Brings the image up to date from the raster and returns it. A region of null means the whole raster;
-    /// an empty one means there is nothing to send.
+    /// Brings the image up to date from the raster and returns it. A region of null means the whole raster,
+    /// whether or not the image already has one of that size; an empty one means there is nothing to send.
     /// </summary>
     public SKImage Update(GRContext context, SKBitmap raster, (int X, int Y, int Width, int Height)? region)
     {
@@ -33,8 +33,12 @@ internal sealed class MirroredTexture : IDisposable
             Allocate(context, raster);
             return snapshot!;
         }
-        if (region is not { } part || part.Width <= 0 || part.Height <= 0) return snapshot!;
-        Patch(raster, part);
+        // No region is the whole raster, and it has to be sent even though the surface is the right size
+        // already: the caller asks for it when the raster is one this image has never mirrored, and a
+        // raster of the same size as the last one is not the same raster. Left as "nothing to send", a
+        // second canvas of the first one's dimensions drew the first one's cells.
+        if (region is null) { Patch(raster, (0, 0, width, height)); return snapshot!; }
+        if (region is { } part && part.Width > 0 && part.Height > 0) Patch(raster, part);
         return snapshot!;
     }
 
