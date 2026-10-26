@@ -60,12 +60,12 @@ public static class EditorDialogs
             ("Fit canvas / toggle grid", "F / H"),
             ("New / open / save", "Ctrl+N / Ctrl+O / Ctrl+S"),
             ("Save as", "Ctrl+Shift+S"),
-            ("Undo / redo", "Ctrl+Z / Ctrl+Y"),
+            ("Undo / redo", "Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z"),
             ("Copy / cut / paste at cursor", "Ctrl+C / Ctrl+X / Ctrl+V"),
             ("Select all / deselect", "Ctrl+A / Ctrl+D"),
             ("Move selected cells", "Arrow keys"),
             ("Rotate selection 60 degrees", "Ctrl+R / Ctrl+Shift+R"),
-            ("Clear selected cells or the layer", "Delete"),
+            ("Clear selected cells or the layer", "Delete or Backspace"),
             ("Deselect", "Esc")
         };
         var panel = new StackPanel { Margin = new Thickness(26) };

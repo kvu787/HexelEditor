@@ -46,7 +46,7 @@ The current release supports up to 32 layers, 2,200,000 hexels with neither side
 | Select all / deselect               | Ctrl+A / Ctrl+D                       |
 | Move selected cells                 | Arrow keys                            |
 | Rotate clockwise / counterclockwise | Ctrl+R / Ctrl+Shift+R                 |
-| Clear selected cells or layer       | Delete                                |
+| Clear selected cells or layer       | Delete or Backspace                   |
 | Deselect                            | Esc                                   |
 
 ## Build and verification
