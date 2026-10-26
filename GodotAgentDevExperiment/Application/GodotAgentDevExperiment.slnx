@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="../Core/Experiment.Core.csproj" />
+  <Project Path="GodotAgentDevExperiment.csproj" />
+  <Project Path="../Tests/Experiment.Core.Tests/Experiment.Core.Tests.csproj" />
+</Solution>
