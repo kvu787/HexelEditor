@@ -14,13 +14,13 @@ pwsh -File ./Scripts/Measure.ps1     # frame timing on NE18NZ2, inside the engin
 
 `Build.cmd` and `Run.cmd` wrap the first two for File Explorer. Every run writes to a timestamped folder under `LogOutput`.
 
-| Folder          | What it holds                                                                     |
-| --------------- | --------------------------------------------------------------------------------- |
-| `Application`   | The Godot project: `project.godot`, the C# sources, the shaders                   |
-| `Core`          | Hex grid mathematics with no engine dependency, shared with the application       |
-| `Tests`         | xUnit tests of the core                                                           |
-| `Assets`        | `LBuilding.glb`, exported by Blender in background mode by `ExportLBuilding.py`   |
-| `Scripts`       | Validation, measurement and the helpers they share with the WPF editor's scripts  |
+| Folder        | What it holds                                                                    |
+| ------------- | -------------------------------------------------------------------------------- |
+| `Application` | The Godot project: `project.godot`, the C# sources, the shaders                  |
+| `Core`        | Hex grid mathematics with no engine dependency, shared with the application      |
+| `Tests`       | xUnit tests of the core                                                          |
+| `Assets`      | `LBuilding.glb`, exported by Blender in background mode by `ExportLBuilding.py`  |
+| `Scripts`     | Validation, measurement and the helpers they share with the WPF editor's scripts |
 
 ## What a validation run does
 
