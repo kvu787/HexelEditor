@@ -25,6 +25,60 @@ public sealed class EditorTests
             }
     }
 
+    [Fact]
+    public void RoundingAlwaysLandsOnANearestCellIncludingAtTies()
+    {
+        // A fine grid of fractional coordinates, in twelfths so that it includes the exact halves and thirds
+        // where a point sits on an edge between two cells or a corner between three. Wherever it is, the
+        // cell chosen has to be as near as any cell is: at a tie any of the cells sharing the edge will do,
+        // and nothing further away will. The rounding is free to change how it breaks ties, as it has, but
+        // not this.
+        for (var qTwelfths = -60; qTwelfths <= 60; qTwelfths++)
+            for (var rTwelfths = -60; rTwelfths <= 60; rTwelfths++)
+            {
+                double q = qTwelfths / 12.0, r = rTwelfths / 12.0;
+                var chosen = HexCoordinate.Round(q, r);
+                var nearest = double.MaxValue;
+                for (var candidateQ = (int)Math.Floor(q) - 1; candidateQ <= (int)Math.Ceiling(q) + 1; candidateQ++)
+                    for (var candidateR = (int)Math.Floor(r) - 1; candidateR <= (int)Math.Ceiling(r) + 1; candidateR++)
+                        nearest = Math.Min(nearest, Distance(new(candidateQ, candidateR), q, r));
+                Assert.True(Distance(chosen, q, r) <= nearest + 1e-9,
+                    $"Rounding ({q}, {r}) chose {chosen}, {Distance(chosen, q, r)} away, where a cell {nearest} away exists.");
+            }
+
+        // The hex distance of a cell from a fractional point: the cube coordinates' differences, halved.
+        static double Distance(HexCoordinate cell, double q, double r) =>
+            (Math.Abs(cell.Q - q) + Math.Abs(cell.R - r) + Math.Abs(cell.S - (-q - r))) / 2;
+    }
+
+    [Fact]
+    public void RoundingBreaksTiesTheWayTheShaderDoes()
+    {
+        // The shader decides which cell a pixel is in and this decides which cell the pointer is in, and at a
+        // tie only the rule decides, so the rule has to be the same one. The reference is the shader's
+        // axialRound, in the single precision it runs in. Eighths, because they are exact in binary at both
+        // precisions: a point exactly on an edge has to be exactly on it for both. Rounding to even failed
+        // this at q = r = -7.5, among others: the pointer there was read as one cell and drawn as its
+        // neighbour.
+        for (var qEighths = -60; qEighths <= 60; qEighths++)
+            for (var rEighths = -60; rEighths <= 60; rEighths++)
+            {
+                double q = qEighths / 8.0, r = rEighths / 8.0;
+                Assert.Equal(ShaderRound((float)q, (float)r), HexCoordinate.Round(q, r));
+            }
+
+        static HexCoordinate ShaderRound(float x, float z)
+        {
+            var y = -x - z;
+            float rx = MathF.Floor(x + 0.5f), ry = MathF.Floor(y + 0.5f), rz = MathF.Floor(z + 0.5f);
+            float dx = MathF.Abs(rx - x), dy = MathF.Abs(ry - y), dz = MathF.Abs(rz - z);
+            if (dx > dy && dx > dz) rx = -ry - rz;
+            else if (dy > dz) ry = -rx - rz;
+            else rz = -rx - ry;
+            return new((int)rx, (int)rz);
+        }
+    }
+
     [Theory]
     [InlineData(0, 0, 20, -9)]
     [InlineData(-8, 12, 8, -4)]

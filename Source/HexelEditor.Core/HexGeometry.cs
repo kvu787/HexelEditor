@@ -9,18 +9,29 @@ public readonly record struct HexCoordinate(int Q, int R)
     public static HexCoordinate operator +(HexCoordinate left, HexCoordinate right) => new(left.Q + right.Q, left.R + right.R);
     public int DistanceTo(HexCoordinate other) => (Math.Abs(Q - other.Q) + Math.Abs(R - other.R) + Math.Abs(S - other.S)) / 2;
 
+    // Cube rounding: the nearest cell to a fractional axial coordinate. The three cube coordinates sum to
+    // zero, so the one that moved furthest in rounding is recomputed from the other two.
+    //
+    // Written term for term as axialRound in GpuHexRenderer's shader, which decides which cell each pixel
+    // belongs to, so that the pointer and the picture agree about which cell a point on an edge is in. At a
+    // tie both cells sharing the edge are nearest and only the rule decides between them, so it has to be
+    // the same rule: halves rounded up from the floor rather than to the nearest even number, which is what
+    // Math.Round does, and the coordinates compared in the shader's order. With Math.Round a pointer on the
+    // edge between two cells was read as one of them while the pixel under it was drawn as the other.
     public static HexCoordinate Round(double q, double r)
     {
         var s = -q - r;
-        var roundedQ = (int)Math.Round(q);
-        var roundedR = (int)Math.Round(r);
-        var roundedS = (int)Math.Round(s);
+        var roundedQ = Math.Floor(q + 0.5);
+        var roundedS = Math.Floor(s + 0.5);
+        var roundedR = Math.Floor(r + 0.5);
         var differenceQ = Math.Abs(roundedQ - q);
-        var differenceR = Math.Abs(roundedR - r);
         var differenceS = Math.Abs(roundedS - s);
-        if (differenceQ > differenceR && differenceQ > differenceS) roundedQ = -roundedR - roundedS;
-        else if (differenceR > differenceS) roundedR = -roundedQ - roundedS;
-        return new(roundedQ, roundedR);
+        var differenceR = Math.Abs(roundedR - r);
+        if (differenceQ > differenceS && differenceQ > differenceR) roundedQ = -roundedS - roundedR;
+        // The middle branch of the shader recomputes s, which the axial pair does not carry; what matters is
+        // that r is left alone there and recomputed only when neither q nor s moved the furthest.
+        else if (differenceS <= differenceR) roundedR = -roundedQ - roundedS;
+        return new((int)roundedQ, (int)roundedR);
     }
 
     public IEnumerable<HexCoordinate> LineTo(HexCoordinate end)
