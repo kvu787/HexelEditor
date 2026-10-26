@@ -101,7 +101,7 @@ Assume the machine is in use and may be locked or unlocked. Both work; nothing h
 
 Run `pwsh -File ./Scripts/Validate.ps1`. That is the only way to check your own work on the editor. It builds, runs the tests, drives the real interface in a hidden host, puts the real window on NE18NZ2, and watches the whole run for anything that would disturb whoever is at the machine. It exits non-zero if a window of the run became visible off NE18NZ2 even for one frame, moved onto a user display, took the foreground, captured the mouse, or confined the cursor. Read the report it points at and say what passed.
 
-Do not reach for `Run.ps1`, `Verify.ps1` or `HexelEditor.exe` directly while the machine may be in use, and do not pass `-SameDesktop`. An offscreen window is not enough on the displayed desktop: the hidden host takes the foreground, the menu check captures the real mouse, and the submenu's popup appears at the top left of the primary display. `Validate.ps1` runs the hidden host on a Win32 desktop of its own, where none of that can reach anyone.
+Do not reach for `Run.ps1`, `Verify.ps1`, `Exercise.ps1` or `HexelEditor.exe` directly while the machine may be in use, and do not pass `-SameDesktop`. `Exercise.ps1` takes the foreground and types on the real keyboard by design, so it is for a machine nobody is using and nothing else. An offscreen window is not enough on the displayed desktop: the hidden host takes the foreground, the menu check captures the real mouse, and the submenu's popup appears at the top left of the primary display. `Validate.ps1` runs the hidden host on a Win32 desktop of its own, where none of that can reach anyone.
 
 These are hard rules, so build new checks to fit them:
 
