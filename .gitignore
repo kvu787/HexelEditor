@@ -8,3 +8,4 @@ LogOutput/
 *.suo
 **/BlenderHexGrid/Output/
 **/.godot/
+**/override.cfg
