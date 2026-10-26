@@ -29,7 +29,8 @@ pwsh -File ./Scripts/Measure.ps1     # frame timing on NE18NZ2, inside the engin
 3. Runs the core's xUnit tests.
 4. Runs the application's in-engine checks headless: no display server at all.
 5. Runs the same checks with real rendering on a Win32 desktop of their own, once per renderer: D3D12, Vulkan and OpenGL.
-6. Puts the real window on NE18NZ2 without focus, runs the checks there, and photographs it from outside.
-7. Reports whether anything of the run became visible on a user display, took the foreground, captured the mouse or confined the cursor.
+6. With `-Export`, exports the standalone release build without a window and runs the same checks on it.
+7. Puts the real window on NE18NZ2 without focus, runs the checks there, and photographs it from outside.
+8. Reports whether anything of the run became visible on a user display, took the foreground, captured the mouse or confined the cursor.
 
 The in-engine checks (`--checks`) drive the interface through `Input.ParseInputEvent`: a button click, a click and a drag stroke on the ground, shortcut keys, the File menu by mouse and keyboard, a confirmation dialog and the file dialog, the top-down toggle, a capture of the viewport, and a timing measurement over a brush stroke. Each check reports passed, failed or skipped, and the launcher requires every one of them to have reported.

@@ -6,6 +6,8 @@ param(
     [switch] $SkipDisplayPass,
     # Runs only that pass, on the build that is already there, for looking into it on its own.
     [switch] $OnlyDisplayPass,
+    # Also exports the standalone release build and runs its checks on a desktop of its own.
+    [switch] $Export,
     # The rendering drivers to run the checks under on a desktop of their own. Forward+ for d3d12 and vulkan,
     # the Compatibility renderer for opengl3.
     [string[]] $RenderingDrivers = @('d3d12', 'vulkan', 'opengl3'),
@@ -125,6 +127,27 @@ try {
             Add-Step -Name "Checks on a desktop of their own ($driver)" -Outcome 'passed' -Detail (Read-ChecksReport -Folder $folder -ExitCode $exitCode)
         }
         catch { Add-Step -Name "Checks on a desktop of their own ($driver)" -Outcome 'failed' -Detail "$_" }
+    }
+
+    # The standalone build, exported without a window and run through the same checks. The exported build
+    # has no project folder to find the example piece next to, so it is told where the piece is.
+    if ($Export -and -not $OnlyDisplayPass) {
+        try {
+            $folder = Join-Path $validationPath 'Exported'
+            New-Item -ItemType Directory -Path $folder -Force | Out-Null
+            & (Join-Path $PSScriptRoot 'Export.ps1') 2>&1 | Set-Content -LiteralPath (Join-Path $validationPath 'Export.txt')
+            $executable = Join-Path $ExperimentRoot 'Artifacts/Release/GodotAgentDevExperiment.exe'
+            $piece = Join-Path $ExperimentRoot 'Assets/LBuilding.glb'
+            $arguments = @('--log-file', ('"{0}"' -f (Join-Path $folder 'Godot.log')), '--', '--log-folder', ('"{0}"' -f $folder), '--checks', '--frames', "$Frames", '--columns', "$MeasureColumns", '--rows', "$MeasureRows", '--piece', ('"{0}"' -f $piece))
+            $desktop = New-IsolatedDesktop -Name 'GodotValidation'
+            try {
+                $process = Start-ProcessOnDesktop -Desktop $desktop -FilePath $executable -ArgumentList $arguments -WorkingDirectory (Split-Path -Parent $executable)
+                $exitCode = Wait-ProcessOnDesktop -Process $process -TimeoutMilliseconds 180000
+            }
+            finally { Remove-IsolatedDesktop -Desktop $desktop }
+            Add-Step -Name 'Exported release build on a desktop of its own' -Outcome 'passed' -Detail (Read-ChecksReport -Folder $folder -ExitCode $exitCode)
+        }
+        catch { Add-Step -Name 'Exported release build on a desktop of its own' -Outcome 'failed' -Detail "$_" }
     }
 
     # The real window on the validation display, at that display's real pixel density, driven through the

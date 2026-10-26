@@ -17,7 +17,7 @@ The question was to what extent an agent can develop, test and measure a Godot 4
 | Frame timing inside the engine            | Yes                        | Frame interval, the renderer's own CPU and GPU times, and the cost of a texture upload, per frame.     |
 | Frame timing from outside, to the display | Yes, unelevated            | PresentMon on NE18NZ2, as a member of Performance Log Users; present mode, latency to display.         |
 | Exporting a standalone release build      | Yes                        | `godot --headless --export-release`, once a solution file sits next to `project.godot`.                |
-| Running the exported build                | Yes                        | On a desktop of its own, through the same checks.                                                      |
+| Running the exported build                | Yes                        | On a desktop of its own, through the same checks: `Validate.ps1 -Export`.                              |
 | Exporting assets from Blender             | Yes                        | `blender -b --python`, which opens no window; custom properties come through as glTF extras.           |
 | The Godot editor's own interface          | No                         | Not needed for any of the above. If it ever is, that is what a second machine would be for.            |
 | Real mouse and keyboard, through Windows  | No                         | `SendInput` reaches the displayed desktop only. The same limit as the WPF editor's `Exercise.ps1`.     |
@@ -46,16 +46,19 @@ Each of these cost a failed run or a wrong number before it was understood. They
 
 ## Numbers
 
-All medians over 240 frames of a brush stroke, taken while the machine was in use, so the intervals carry whatever else the processor and GPU were doing; the renderer's own times are steadier. `Scripts/Validate.ps1` re-measures them on every run.
+All medians over 240 frames of a brush stroke, from `LogOutput/Validation_2026-10-26_13-15-03`, the measurement run before it and the `-Export` validation after it, taken while the machine was in use, so the intervals carry whatever else the processor and GPU were doing; the renderer's own times are steadier. `Scripts/Validate.ps1` re-measures them on every run.
 
-| Run                  | Renderer                    | Frame interval | Render, CPU side | Render, GPU | Upload per paint |
-| -------------------- | --------------------------- | -------------: | ---------------: | ----------: | ---------------: |
-| Headless             | none                        |        6.90 ms |                - |           - |         0.006 ms |
-| Own desktop, 48 x 40 | Forward+ on D3D12           |        8.30 ms |          0.12 ms |     0.04 ms |         0.013 ms |
-| Own desktop, 48 x 40 | Forward+ on Vulkan          |        9.98 ms |          0.13 ms |     0.05 ms |         0.014 ms |
-| Own desktop, 48 x 40 | Compatibility on OpenGL 3.3 |       10.18 ms |          9.65 ms |     0.03 ms |         0.012 ms |
-| NE18NZ2, 48 x 40     | Forward+ on D3D12           |        2.01 ms |          0.09 ms |     0.03 ms |         0.016 ms |
-| NE18NZ2, 1024 x 1024 | Forward+ on D3D12           |        2.26 ms |          0.08 ms |     0.03 ms |         0.335 ms |
+| Run                                | Renderer                    | Frame interval | Render, CPU side | Render, GPU | Upload per paint |
+| ---------------------------------- | --------------------------- | -------------: | ---------------: | ----------: | ---------------: |
+| Headless, 48 x 40                  | none                        |        6.90 ms |                - |           - |         0.006 ms |
+| Own desktop, 1024 x 1024           | Forward+ on D3D12           |        9.01 ms |          0.12 ms |     0.04 ms |         0.323 ms |
+| Own desktop, 1024 x 1024           | Forward+ on Vulkan          |       10.16 ms |          0.13 ms |     0.05 ms |         0.304 ms |
+| Own desktop, 1024 x 1024           | Compatibility on OpenGL 3.3 |       11.22 ms |          0.30 ms |     0.03 ms |         0.326 ms |
+| Own desktop, 1024 x 1024, exported | Forward+ on D3D12           |        2.68 ms |          0.09 ms |     0.03 ms |         0.515 ms |
+| NE18NZ2, 48 x 40                   | Forward+ on D3D12           |        3.10 ms |          0.08 ms |     0.03 ms |         0.014 ms |
+| NE18NZ2, 1024 x 1024               | Forward+ on D3D12           |        2.26 ms |          0.08 ms |     0.03 ms |         0.335 ms |
+
+The first run after the shader was written put the OpenGL renderer's CPU-side time at 9.65 ms; the next run's was 0.30 ms. A first run compiles shaders, so one run's figure is not a figure. On the 48 x 40 grid the upload is 0.013 ms under every renderer.
 
 PresentMon over the 1024 x 1024 run on NE18NZ2, 898 presented frames, DXGI, "Composed: Flip", sync interval 1:
 
