@@ -18,7 +18,6 @@ config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 
 window/size/viewport_width=1280
 window/size/viewport_height=800
-window/stretch/mode="disabled"
 
 [dotnet]
 
@@ -31,7 +30,6 @@ project/assembly_name="GodotAgentDevExperiment"
 
 [rendering]
 
-renderer/rendering_method="forward_plus"
 rendering_device/driver.windows="d3d12"
 rendering_device/fallback_to_vulkan=false
 rendering_device/fallback_to_opengl3=false
