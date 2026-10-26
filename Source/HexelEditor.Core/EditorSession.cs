@@ -110,14 +110,17 @@ public sealed class EditorSession
         return region;
     }
 
-    public void EndStroke(string label = "Brush stroke")
+    // Ends the stroke and reports it, together with whatever else the operation ending it changed, so that
+    // an operation is reported once. A flood fill used to report itself twice, once as the stroke ending and
+    // once as pixels, and every report is a header rebuild and a frame for the window.
+    public void EndStroke(string label = "Brush stroke", EditorChange alongside = 0)
     {
         if (!stroking) return;
         var cells = Document.Layers[strokeLayer].Cells;
         var edits = strokeRecord!.Edits(cells);
         stroking = false;
-        if (edits.Length > 0) { Commit(label, new PixelChange(strokeLayer, edits, strokeSelection, strokeSelection == null ? null : CaptureSelection())); Notify(EditorChange.Pixels | EditorChange.History); }
-        else Notify(EditorChange.History);
+        if (edits.Length > 0) { Commit(label, new PixelChange(strokeLayer, edits, strokeSelection, strokeSelection == null ? null : CaptureSelection())); Notify(EditorChange.Pixels | EditorChange.History | alongside); }
+        else Notify(EditorChange.History | alongside);
         strokeSelection = null;
     }
 
@@ -157,7 +160,6 @@ public sealed class EditorSession
             }
         }
         EndStroke("Flood fill");
-        Notify(EditorChange.Pixels);
     }
 
     public void DrawLine(HexCoordinate start, HexCoordinate end, uint color, int radius)
@@ -168,7 +170,6 @@ public sealed class EditorSession
         foreach (var point in start.LineTo(end))
             foreach (var cell in point.Disk(radius)) SetPixel(Document.IndexOf(cell), color);
         EndStroke("Line");
-        Notify(EditorChange.Pixels);
     }
 
     public void DrawRectangle(HexCoordinate start, HexCoordinate end, uint color, bool filled)
@@ -186,7 +187,6 @@ public sealed class EditorSession
             for (var column = left; column <= right; column++)
                 if (filled || row == top || row == bottom || column == left || column == right) SetPixel(row * Document.Width + column, color);
         EndStroke("Rectangle");
-        Notify(EditorChange.Pixels);
     }
 
     public void SelectRectangle(HexCoordinate start, HexCoordinate end)
@@ -222,7 +222,6 @@ public sealed class EditorSession
         else
             for (var index = 0; index < Document.CellCount; index++) SetPixel(index, 0);
         EndStroke("Clear cells");
-        Notify(EditorChange.Pixels);
     }
 
     public CellClipboard CopySelection()
@@ -251,8 +250,7 @@ public sealed class EditorSession
         Selection.Clear();
         selectionPivot = null;
         PaintThenSelect(CellsLandingAt(clipboard, column, row));
-        EndStroke("Paste");
-        Notify(EditorChange.Pixels | EditorChange.Selection);
+        EndStroke("Paste", EditorChange.Selection);
     }
 
     public void MoveSelection(int columns, int rows)
@@ -266,8 +264,7 @@ public sealed class EditorSession
         Selection.Clear();
         selectionPivot = null;
         PaintThenSelect(CellsLandingAt(clipboard, left + columns, top + rows));
-        EndStroke("Move selection");
-        Notify(EditorChange.Pixels | EditorChange.Selection);
+        EndStroke("Move selection", EditorChange.Selection);
     }
 
     // Where a clipboard's cells land with its top left corner at this column and row, dropping whatever
@@ -346,8 +343,7 @@ public sealed class EditorSession
         }
         Selection.UnionWith(destination);
         selectionPivot = pivot;
-        EndStroke("Rotate selection");
-        Notify(EditorChange.Pixels | EditorChange.Selection);
+        EndStroke("Rotate selection", EditorChange.Selection);
     }
 
     public void DeleteLayer()

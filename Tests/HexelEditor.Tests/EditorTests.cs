@@ -154,6 +154,33 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public void AnEditingOperationReportsItselfOnce()
+    {
+        // Each report costs the window a header rebuild and a frame, and an operation that ends a stroke
+        // used to send two: one for the stroke ending and one for itself. What it changed is said once.
+        var document = new HexDocument(8, 8);
+        var session = new EditorSession(document);
+        var reports = new List<EditorChange>();
+        session.Changed += reports.Add;
+        void Expect(EditorChange expected, Action operation)
+        {
+            reports.Clear();
+            operation();
+            Assert.Equal([expected], reports);
+        }
+        const EditorChange edited = EditorChange.Pixels | EditorChange.History;
+        Expect(edited, () => session.FloodFill(document.CoordinateAt(0), Red));
+        Expect(edited, () => session.DrawLine(document.CoordinateAt(0), document.CoordinateAt(7), Blue, 0));
+        Expect(edited, () => session.DrawRectangle(document.CoordinateAt(9), document.CoordinateAt(27), Blue, false));
+        Expect(EditorChange.Selection, () => session.SelectRectangle(document.CoordinateAt(9), document.CoordinateAt(27)));
+        Expect(edited | EditorChange.Selection, () => session.MoveSelection(1, 1));
+        Expect(edited | EditorChange.Selection, () => session.RotateSelection(1));
+        Expect(edited, session.ClearPixels);
+        var clipboard = session.CopySelection();
+        Expect(edited | EditorChange.Selection, () => session.Paste(clipboard, 0, 0));
+    }
+
+    [Fact]
     public void BrushDiskContainsTheSixHexNeighbors()
     {
         var origin = new HexCoordinate(0, 0);
