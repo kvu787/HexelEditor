@@ -69,6 +69,7 @@ public static class NativeWindowing
     }
     private const int ExtendedFrameBounds = 9;
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr handle, IntPtr deviceContext, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool PostMessageW(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr handle, System.Text.StringBuilder text, int count);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool EnumDisplayDevicesW(string device, uint index, ref DisplayDevice target, uint flags);
     [DllImport("shcore.dll")] public static extern int SetProcessDpiAwareness(int awareness);
@@ -130,6 +131,18 @@ function Assert-ForegroundUnchanged {
     if ($now.Handle -ne $Guard.Handle) {
         throw "Focus moved from '$($Guard.Title)' to '$($now.Title)'. A validation step must never take the foreground."
     }
+}
+
+# Asks a process's window to close, the way the close button does, and activates nothing. Process.CloseMainWindow
+# cannot do it for the editor during validation: MainWindowHandle only answers for a window without an owner,
+# and keeping the window out of the taskbar gives it one, so that call found no window, did nothing, and the
+# editor was killed at the timeout on every run. Returns whether a window was found to ask.
+function Request-WindowClose {
+    param([Parameter(Mandatory)][int] $ProcessId)
+    $handle = [NativeWindowing]::FindProcessWindow($ProcessId)
+    if ($handle -eq [IntPtr]::Zero) { return $false }
+    [void] [NativeWindowing]::PostMessageW($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+    return $true
 }
 
 # Prefer ProcessId. Looking a window up by process name would find whichever editor happens to be open,

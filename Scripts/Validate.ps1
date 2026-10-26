@@ -110,8 +110,10 @@ try {
         }
         finally {
             if ($editor) {
-                # WM_CLOSE asks the window to close and activates nothing.
-                $null = $editor.CloseMainWindow()
+                # WM_CLOSE asks the window to close and activates nothing. Through the window that was found
+                # rather than Process.CloseMainWindow, which sees no main window here and did nothing, so the
+                # editor never exited on its own and was killed ten seconds later every run.
+                $null = Request-WindowClose -ProcessId $editor.Id
                 if (-not $editor.WaitForExit(10000)) { $editor.Kill() }
             }
         }
