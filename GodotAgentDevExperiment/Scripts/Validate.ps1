@@ -162,7 +162,7 @@ try {
             New-Item -ItemType Directory -Path $folder -Force | Out-Null
             # The checks take a few seconds; --hold keeps the window up afterwards so it can be photographed
             # from outside and its styles and taskbar button looked at.
-            $application = & (Join-Path $ExperimentRoot 'Run.ps1') -Display $Display -PassThru -LogFolder $folder -ApplicationArguments @('--checks', '--frames', "$Frames", '--hold', '12')
+            $application = & (Join-Path $PSScriptRoot 'StartOnDisplay.ps1') -Display $Display -LogFolder $folder -ApplicationArguments @('--checks', '--frames', "$Frames", '--hold', '12')
             Register-WatchedProcess -Watch $watch -ProcessId $application.Id
             $handle = Get-WindowHandle -ProcessId $application.Id -TimeoutMilliseconds 30000
             # Photographed once the checks have run, so the picture shows the interface they drove rather than

@@ -5,14 +5,15 @@ An experiment in developing, testing and measuring a Godot 4.7.2 .NET (C#) appli
 Requirements: Godot 4.7.2 .NET at `%UserProfile%\Program\Godot_v4.7.2-stable_mono_win64`, the .NET 10 SDK, and PowerShell 7. The Godot editor is never opened; the editor executable runs the import pass headless and runs the application.
 
 ```powershell
-pwsh -File ./Build.ps1               # headless import pass, then dotnet build
-pwsh -File ./Run.ps1                 # opens the application normally, in front
-pwsh -File ./Scripts/Test.ps1        # the engine-free core under xUnit
-pwsh -File ./Scripts/Validate.ps1    # everything, watched: the entry point while the machine is in use
-pwsh -File ./Scripts/Measure.ps1     # frame timing on NE18NZ2, inside the engine and through PresentMon
+pwsh -File ./Build.ps1                                     # headless import pass, then dotnet build
+pwsh -File ./Run.ps1                                       # opens the application for a person, in front
+pwsh -File ./Scripts/Test.ps1                              # the engine-free core under xUnit
+pwsh -File ./Scripts/Validate.ps1                          # everything, watched: the entry point while the machine is in use
+pwsh -File ./Scripts/Measure.ps1                           # frame timing on NE18NZ2, inside the engine and through PresentMon
+pwsh -File ./Scripts/StartOnDisplay.ps1 -Display NE18NZ2   # the window on NE18NZ2 without focus, unwatched
 ```
 
-`Build.cmd` and `Run.cmd` wrap the first two for File Explorer. Every run writes to a timestamped folder under `LogOutput`.
+`Build.cmd` and `Run.cmd` wrap the first two for File Explorer. `Run.cmd` is for a person using the application; an agent working while someone uses the machine goes through the scripts in `Scripts` instead. Every run writes to a timestamped folder under `LogOutput`.
 
 | Folder        | What it holds                                                                    |
 | ------------- | -------------------------------------------------------------------------------- |
