@@ -47,7 +47,11 @@ Write-Output "Validation display: $Display. Session locked: $locked (input deskt
 Write-Output "Artifacts: $validationPath"
 Write-Output ''
 
-$watch = Start-DisruptionWatch -AllowedMonitor $Display
+# With -SameDesktop the hidden host is allowed to disturb the machine: it takes the foreground, captures the
+# mouse and opens its submenu's popup on the primary display, which is what that switch accepts in return for
+# the stronger menu check. Watching it would only fail the run for what was asked for, so the watch then
+# covers the display pass alone, which is held to the same standard either way.
+$watch = if ($SameDesktop) { $null } else { Start-DisruptionWatch -AllowedMonitor $Display }
 # Filled line by line as Verify.ps1 writes them, so that a run which fails partway still leaves everything it
 # said before failing in Verify.txt. Assigned from the pipeline, the lines before the failure were lost with
 # the assignment, and the file held only the error.
@@ -75,6 +79,8 @@ try {
         $verifyOutput | Set-Content -LiteralPath (Join-Path $validationPath 'Verify.txt')
         Add-Step -Name 'Build, tests and hidden-host verification' -Outcome 'failed' -Detail "$_"
     }
+
+    if ($null -eq $watch) { $watch = Start-DisruptionWatch -AllowedMonitor $Display }
 
     # The real window at real pixel density on the validation display. This is the only step that puts
     # anything on a screen, and the only one that cannot work without an input desktop.
@@ -120,17 +126,19 @@ try {
     }
 }
 finally {
-    $guard = Stop-DisruptionWatch -Watch $watch
+    $guard = if ($null -ne $watch) { Stop-DisruptionWatch -Watch $watch } else { $null }
 }
+if ($null -eq $guard) { throw 'The disruption watch never started, so this run cannot say whether it disturbed anyone.' }
 
+$watched = if ($SameDesktop) { 'Display pass did not disturb the machine' } else { 'Did not disturb the machine' }
 if ($guard.Passed) {
     # Clip changes are worth reporting even when none of them was this run's: they are the machine being used
     # while it ran, which is the condition all of this exists to survive.
     $clips = if ($guard.CursorClipChanges -gt 0) { ", and $($guard.CursorClipChanges) cursor clip changes that belonged to someone else" } else { '' }
-    Add-Step -Name 'Did not disturb the machine' -Outcome 'passed' -Detail "$($guard.Observations.Count) window events seen over $($guard.Seconds) s, none on a user display and none taking focus$clips"
+    Add-Step -Name $watched -Outcome 'passed' -Detail "$($guard.Observations.Count) window events seen over $($guard.Seconds) s, none on a user display and none taking focus$clips"
 }
 else {
-    Add-Step -Name 'Did not disturb the machine' -Outcome 'failed' -Detail ($guard.Violations -join ' | ')
+    Add-Step -Name $watched -Outcome 'failed' -Detail ($guard.Violations -join ' | ')
 }
 
 $summary = [PSCustomObject]@{
@@ -142,6 +150,7 @@ $summary = [PSCustomObject]@{
     ValidationDisplay = $Display
     ValidationDisplayBounds = $guard.AllowedBounds
     HiddenHostOnOwnDesktop = -not $SameDesktop
+    WatchedFrom = if ($SameDesktop) { 'the display pass' } else { 'the start' }
     ForegroundAtStart = $guard.BaselineForegroundTitle
     ForegroundChanges = $guard.ForegroundChanges
     CursorClipChanges = $guard.CursorClipChanges
@@ -154,7 +163,8 @@ $steps | Format-Table -AutoSize | Out-String | Set-Content -LiteralPath (Join-Pa
 
 Write-Output ''
 if ($summary.Passed) {
-    Write-Output "Validation passed. Nothing of the run appeared outside $Display, took the foreground, or confined the cursor."
+    $covered = if ($SameDesktop) { 'the display pass' } else { 'the run' }
+    Write-Output "Validation passed. Nothing of $covered appeared outside $Display, took the foreground, or confined the cursor."
     Write-Output "Artifacts: $validationPath"
 }
 else {
