@@ -480,7 +480,9 @@ public sealed class HexCanvas : GLWpfControl
     public void FinishGesture()
     {
         session?.EndStroke(Tool == DrawingTool.Eraser || eraseGesture ? "Erase" : "Brush stroke");
-        drawing = false; panning = false; previous = start = null; Cursor = Cursors.Cross; InvalidateVisual();
+        // Forgotten with the gesture, so that a stroke made through the session after a right-button erase
+        // is not labelled as one.
+        drawing = false; panning = false; eraseGesture = false; previous = start = null; Cursor = Cursors.Cross; InvalidateVisual();
     }
 
     private void Wheel(object sender, MouseWheelEventArgs args) { ChangeZoom(args.Delta > 0 ? 1.15f : 1 / 1.15f, args.GetPosition(this)); args.Handled = true; }
