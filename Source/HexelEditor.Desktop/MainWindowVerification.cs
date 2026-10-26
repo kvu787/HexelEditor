@@ -368,12 +368,14 @@ public partial class MainWindow
         KeyboardInput.Type(source, Key.Z, ModifierKeys.Control);
         KeyboardInput.WaitUntil(() => document.CompositeAt(painted) == 0, "Ctrl+Z did not undo the redone stroke");
 
+        var menu = VerifyKeysLeftToAFocusedMenuItem(source);
+
         // Modifiers must not be left down, or every later key would arrive as a shortcut.
         if (Keyboard.Modifiers != ModifierKeys.None)
             throw new InvalidOperationException($"The keyboard checks left {Keyboard.Modifiers} held down.");
         if (session.IsDirty) throw new InvalidOperationException("The keyboard checks left the document unsaved.");
         File.AppendAllText(System.IO.Path.Combine(folder, "Verification.txt"),
-            $"Keyboard input: {tools.Length} tool keys, brush and grid keys, Space held and released, Ctrl+A, Ctrl+D, Ctrl+Z and Ctrl+Shift+Z verified through real key messages with the modifiers really held\n");
+            $"Keyboard input: {tools.Length} tool keys, brush and grid keys, Space held and released, Ctrl+A, Ctrl+D, Ctrl+Z and Ctrl+Shift+Z verified through real key messages with the modifiers really held; {menu}\n");
     }
 
     // The renderer at the sizes a cell is really drawn at, from a canvas far larger than the window to one
@@ -439,6 +441,8 @@ public partial class MainWindow
     // knows which of those it is looking at.
     private string VerifyMenu()
     {
+        var source = PresentationSource.FromVisual(FileMenu)
+            ?? throw new InvalidOperationException("The File menu is not in a window.");
         FileMenu.ApplyTemplate();
         // A menu item refuses to open its submenu before it has been loaded, so let pending Loaded events run first.
         Dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
@@ -459,12 +463,73 @@ public partial class MainWindow
             throw new InvalidOperationException("The File menu did not open.");
         submenu.UpdateLayout();
         if (submenu.ActualWidth < 120 || submenu.ActualHeight < 120) throw new InvalidOperationException("The File menu rendered empty.");
+        if (submenuPath == "through the menu item")
+        {
+            // Opened through its item, the menu owns the keyboard, and Escape is how a hand closes it. The
+            // window's shortcut handler sees every key before the menu does and once took Escape for itself,
+            // which cleared the selection and left the menu standing. Only this path can check it, because
+            // only menu mode has anything for Escape to close, and menu mode is only here: it needs mouse
+            // capture, which the keyboard checks at the end of the run can no longer get, because taking the
+            // focus for them makes WPF re-read the pointer from a cursor that is not over the window.
+            //
+            // The key cannot be struck, for the same reason: a key routes to the focused element, and taking
+            // the focus here would spoil the pointer checks that follow. So Escape is raised as the two routed
+            // events a struck key raises, in their order: the tunnelling preview, where the window's handler
+            // sits and where it once took the key, then the bubbling event the menu answers.
+            var preview = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            FileMenu.RaiseEvent(preview);
+            if (preview.Handled) throw new InvalidOperationException("The window took Escape away from the open File menu.");
+            FileMenu.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
+            UpdateLayout();
+            if (FileMenu.IsSubmenuOpen || popup.IsOpen) throw new InvalidOperationException("Escape did not close the open File menu.");
+            submenuPath += " and closed by Escape";
+        }
         popup.IsOpen = false;
         // Restored only once the popup is closed, because a popup that is open when StaysOpen goes back to
         // false immediately reaches for the capture it was opened without.
         popup.StaysOpen = staysOpen;
         FileMenu.IsSubmenuOpen = false;
+        // On an input desktop the menu took mouse capture to open through its item, and closing the submenu
+        // by property does not give it back: a WPF menu stays in menu mode, holding the capture, until it is
+        // dismissed outright, and one Escape closes the submenu without leaving menu mode. Left held, every
+        // driven pointer move of the check that follows landed on the menu instead of the canvas. Giving the
+        // capture back is what dismissing the menu does, and the check ends by proving that nothing holds it.
+        if (Mouse.Captured is MenuBase menu) menu.ReleaseMouseCapture();
+        if (Mouse.Captured != null)
+            throw new InvalidOperationException($"The menu check left the mouse captured by {Mouse.Captured.GetType().Name}.");
         return submenuPath;
+    }
+
+    // A menu item that has the keyboard focus owns the keys: the arrows walk the menu and a letter picks the
+    // item with that access key. The window sees every key before the menu does, so it has to step aside
+    // while a menu item has the focus, and this strikes a tool key with the File item focused and holds the
+    // tool to what it was. Escape closing an open menu is checked in the menu check, which is the only place
+    // with a menu to close.
+    //
+    // Focusing a menu item puts its menu into menu mode, which needs mouse capture, and a window the mouse is
+    // not over is refused that: without an input desktop there is no cursor, and by this point in the run
+    // there is none over the window on any desktop, because taking the focus for these checks made WPF
+    // re-read the pointer from the physical cursor. When the capture is refused WPF puts the focus straight
+    // back where it was, so the check is made where the item keeps the focus and reported as not made where
+    // it cannot. The key struck is one no menu uses as an access key, so that menu mode, where it holds,
+    // does not answer it by opening a menu.
+    private string VerifyKeysLeftToAFocusedMenuItem(HwndSource source)
+    {
+        if (!ReferenceEquals(Keyboard.Focus(FileMenu), FileMenu))
+        {
+            KeyboardInput.Focus(EditorCanvas);
+            return "a focused menu item not checked, a menu item being unable to keep the focus without mouse capture";
+        }
+        var before = EditorCanvas.Tool;
+        var other = before == DrawingTool.Fill ? Key.B : Key.G;
+        KeyboardInput.Type(source, other);
+        if (EditorCanvas.Tool != before)
+            throw new InvalidOperationException($"A tool key changed the tool to {EditorCanvas.Tool} while the File menu item had the keyboard focus.");
+        KeyboardInput.Focus(EditorCanvas);
+        if (Mouse.Captured is MenuBase menu) menu.ReleaseMouseCapture();
+        if (Mouse.Captured != null)
+            throw new InvalidOperationException($"The focused menu item left the mouse captured by {Mouse.Captured.GetType().Name}.");
+        return "a tool key left alone while the File menu item had the focus";
     }
 
     // The dialogs build their visual tree in code from the application's styles, so measuring one proves those styles apply.
