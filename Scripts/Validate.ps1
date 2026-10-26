@@ -48,7 +48,10 @@ Write-Output "Artifacts: $validationPath"
 Write-Output ''
 
 $watch = Start-DisruptionWatch -AllowedMonitor $Display
-$verifyOutput = @()
+# Filled line by line as Verify.ps1 writes them, so that a run which fails partway still leaves everything it
+# said before failing in Verify.txt. Assigned from the pipeline, the lines before the failure were lost with
+# the assignment, and the file held only the error.
+$verifyOutput = [System.Collections.Generic.List[object]]::new()
 try {
     # The rules that decide whether this run disturbed anyone, checked first. Everything below is judged by
     # them, so a run whose verdict cannot be trusted is worth stopping at rather than reporting.
@@ -63,12 +66,13 @@ try {
     # Build, unit tests, and the real interface driven inside a hidden rendering host. None of this needs a
     # display, so it is the part that works whether the machine is locked or not.
     try {
-        $verifyOutput = & (Join-Path $PSScriptRoot 'Verify.ps1') -SameDesktop:$SameDesktop 2>&1
+        & (Join-Path $PSScriptRoot 'Verify.ps1') -SameDesktop:$SameDesktop 2>&1 | ForEach-Object { $verifyOutput.Add($_) }
         $verifyOutput | Set-Content -LiteralPath (Join-Path $validationPath 'Verify.txt')
         Add-Step -Name 'Build, tests and hidden-host verification' -Outcome 'passed' -Detail "see Verify.txt"
     }
     catch {
-        $verifyOutput + @("$_") | Set-Content -LiteralPath (Join-Path $validationPath 'Verify.txt')
+        $verifyOutput.Add("$_")
+        $verifyOutput | Set-Content -LiteralPath (Join-Path $validationPath 'Verify.txt')
         Add-Step -Name 'Build, tests and hidden-host verification' -Outcome 'failed' -Detail "$_"
     }
 
