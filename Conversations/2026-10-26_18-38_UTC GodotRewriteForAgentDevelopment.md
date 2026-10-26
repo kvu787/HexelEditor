@@ -291,3 +291,19 @@ Yes. One background run is still going: `Validate.ps1 -Export`, which so far has
 **Numbers were taken while you were playing Age of Empires IV**, so intervals are noisy; the renderer's own times are steady, and every validation run re-measures.
 
 Commits: the move, the path fixups, the application, the scripts, the findings, the README padding, and the export step; this conversation follows as `[cnv]`.
+
+## User
+
+does the non-disruptive agent workflow for GodotAgentDevExperiment build and/or use a standalone executable? does it run the godot application by launching godot engine with the project? or something else?
+
+## Assistant
+
+Both, in different places. The agent workflow runs the project through the Godot engine executable; a standalone executable is built and used only when you ask for it.
+
+**Day to day: the engine runs the project.** `Build.ps1` produces no executable. It runs the editor binary headless for the import pass, then `dotnet build` compiles the C# into `Application/.godot/mono/temp/bin/Debug/GodotAgentDevExperiment.dll`. Every run then launches `Godot_v4.7.2-stable_mono_win64.exe --path Application ... -- --checks ...` (the `_console` variant for headless runs). That is the same executable the Godot editor is, started in its "run this project" mode: it never opens the editor, loads that Debug assembly, and runs `Main.tscn`. This is how `Validate.ps1`'s headless pass, its own-desktop passes under each renderer, its display pass on NE18NZ2, `Measure.ps1`, `StartOnDisplay.ps1` and `Run.ps1` all work.
+
+**On request: a standalone executable.** `Validate.ps1 -Export` (or `Scripts/Export.ps1` alone) runs the editor binary headless with `--export-release "Windows Desktop"`. That builds the C# in the `ExportRelease` configuration and lays out `Artifacts/Release/GodotAgentDevExperiment.exe` (the 109 MB release template), `GodotAgentDevExperiment.pck` and the assembly folder beside it. Validation then runs that exe, not the engine, on a desktop of its own through the same fifteen checks, told where the example piece is with `--piece` because an exported build has no project folder to find it next to.
+
+**What the difference means.** The engine-run project is a Debug build (`TOOLS` defined, unoptimized C#) inside the editor binary, which is the right thing for iteration: one `dotnet build` and the next run picks it up, no export step. The exported build is optimized C# in the release template with no editor code, which is what ships and what latency numbers should come from. Today `Measure.ps1` and the PresentMon figures in `Findings.md` measure the engine-run Debug project; pointing `Measure.ps1` at the exported build is a small change.
+
+One thing I noticed: `Application/project.godot` is modified and uncommitted in the working tree, from the "Open project in godot editor which normalizes things" commit's follow-on changes; I left it alone.
