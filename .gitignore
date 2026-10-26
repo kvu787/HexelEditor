@@ -6,4 +6,5 @@ Artifacts/
 LogOutput/
 *.user
 *.suo
-BlenderHexGrid/Output/
+**/BlenderHexGrid/Output/
+**/.godot/

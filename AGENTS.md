@@ -95,11 +95,11 @@ If possible, never steal focus away from the user onto stuff that you launch.
 
 After changing a runnable application, open it on NE18NZ2 and validate the change yourself as part of finishing the work. Don't ask for permission to open it, and don't ask whether the result looks right. Report what you verified and what you could not.
 
-### Rules for validating this application
+### Rules for validating the WPF editor in HexelEditor_Wpf
 
 Assume the machine is in use and may be locked or unlocked. Both work; nothing here depends on which.
 
-Run `pwsh -File ./Scripts/Validate.ps1`. That is the only way to check your own work on the editor. It builds, runs the tests, drives the real interface in a hidden host, puts the real window on NE18NZ2, and watches the whole run for anything that would disturb whoever is at the machine. It exits non-zero if a window of the run became visible off NE18NZ2 even for one frame, moved onto a user display, took the foreground, captured the mouse, or confined the cursor. Read the report it points at and say what passed.
+Run `pwsh -File ./HexelEditor_Wpf/Scripts/Validate.ps1`. That is the only way to check your own work on the editor. It builds, runs the tests, drives the real interface in a hidden host, puts the real window on NE18NZ2, and watches the whole run for anything that would disturb whoever is at the machine. It exits non-zero if a window of the run became visible off NE18NZ2 even for one frame, moved onto a user display, took the foreground, captured the mouse, or confined the cursor. Read the report it points at and say what passed.
 
 Do not reach for `Run.ps1`, `Verify.ps1`, `Exercise.ps1` or `HexelEditor.exe` directly while the machine may be in use, and do not pass `-SameDesktop`. `Exercise.ps1` takes the foreground and types on the real keyboard by design, so it is for a machine nobody is using and nothing else. An offscreen window is not enough on the displayed desktop: the hidden host takes the foreground, the menu check captures the real mouse, and the submenu's popup appears at the top left of the primary display. `Validate.ps1` runs the hidden host on a Win32 desktop of its own, where none of that can reach anyone.
 
