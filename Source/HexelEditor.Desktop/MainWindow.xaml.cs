@@ -352,6 +352,13 @@ public partial class MainWindow : Window
     private void OnKeyDown(object sender, KeyEventArgs args)
     {
         if (Keyboard.FocusedElement is TextBoxBase) { if (args.Key == Key.Escape) FocusCanvas(); return; }
+        // An open menu owns the keyboard: Escape closes it, the arrows walk it, and a letter picks the item
+        // with that access key. Every one of those is an editor shortcut as well, and the window sees the key
+        // before the menu does, so Escape used to clear the selection and leave the menu open, and Down moved
+        // the selection instead of the highlight.
+        if (Keyboard.FocusedElement is MenuItem or MenuBase || Mouse.Captured is MenuBase) return;
+        // A button that has the keyboard focus is pressed with Space or Enter, which must reach it.
+        if (Keyboard.FocusedElement is ButtonBase && args.Key is Key.Space or Key.Enter) return;
         var control = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         var shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
         if (Keyboard.FocusedElement is Slider && !control) return;
