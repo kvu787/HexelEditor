@@ -519,6 +519,70 @@ public sealed class EditorTests
     }
 
     [Fact]
+    public void SelectingEveryCellOfACanvasThatIsNotAWholeNumberOfWordsStopsAtItsLastCell()
+    {
+        // The selection keeps a bit a cell in 64-bit words, and the last word runs past the end of the
+        // canvas. Seventy cells is one word and six bits: a bit set past the sixth would be counted and
+        // enumerated as a cell that does not exist.
+        var selection = new CellSelection(70);
+        selection.SelectAll();
+        Assert.Equal(70, selection.Count);
+        Assert.Equal(Enumerable.Range(0, 70), selection.ToArray());
+        Assert.False(selection.Contains(70));
+    }
+
+    [Fact]
+    public void ARunOfCellsAcrossAWordBoundaryIsSelectedWhole()
+    {
+        // A rectangle is a run along each of its rows, filled a word at a time, so the runs that start in
+        // one word and end in another are the ones the masks have to get right.
+        var document = new HexDocument(100, 3);
+        var session = new EditorSession(document);
+        session.SelectRectangle(HexGeometry.FromOffset(60, 0, document.Orientation), HexGeometry.FromOffset(70, 2, document.Orientation));
+        Assert.Equal(33, session.Selection.Count);
+        var expected = new List<int>();
+        for (var row = 0; row < 3; row++) for (var column = 60; column <= 70; column++) expected.Add(row * 100 + column);
+        Assert.Equal(expected, session.Selection.ToArray());
+        Assert.False(session.Selection.Contains(59));
+        Assert.False(session.Selection.Contains(71));
+        Assert.True(session.Selection.TryBounds(100, out var left, out var top));
+        Assert.Equal((60, 0), (left, top));
+    }
+
+    [Fact]
+    public void HistoryKeepsTheMostRecentTwoHundredCommands()
+    {
+        var document = new HexDocument(16, 16);
+        var session = new EditorSession(document);
+        for (var stroke = 0; stroke < 230; stroke++)
+        {
+            session.Paint(document.CoordinateAt(stroke % document.CellCount), 0xFF000000u | (uint)stroke);
+            session.EndStroke();
+        }
+        var undone = 0;
+        while (session.CanUndo) { session.Undo(); undone++; }
+        Assert.Equal(200, undone);
+        // The thirty oldest strokes are beyond recall, so their cells keep what those strokes left.
+        Assert.Equal(0xFF00001Du, document.Layers[0].Cells[29]);
+        Assert.Equal(0u, document.Layers[0].Cells[30]);
+    }
+
+    [Fact]
+    public void PastingWritesEveryCellOfTheClipboardIncludingTheEmptyOnes()
+    {
+        // A rectangular selection is copied as a block, and the block lands as a block: a cell that held
+        // nothing in the copy clears what it lands on. The move and the rotation work the same way, so this
+        // is the behaviour to keep or to change for all three at once.
+        var document = new HexDocument(4, 1);
+        var session = new EditorSession(document);
+        session.Paint(document.CoordinateAt(0), Red); session.Paint(document.CoordinateAt(2), Blue); session.Paint(document.CoordinateAt(3), Blue); session.EndStroke();
+        session.SelectRectangle(document.CoordinateAt(0), document.CoordinateAt(1));
+        var clipboard = session.CopySelection();
+        session.Paste(clipboard, 2, 0);
+        Assert.Equal(new uint[] { Red, 0, Red, 0 }, document.Layers[0].Cells);
+    }
+
+    [Fact]
     public void EditingReportsOnlyTheCellsItTouchedAsDirty()
     {
         var session = new EditorSession(new HexDocument(40, 32));
