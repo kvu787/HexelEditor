@@ -90,8 +90,11 @@ Support Windows 11 x64 as the only target platform.
 
 If you are creating GUI apps or games, it may be helpful for you to launch the app on a display for validation or other tasks.
 Assume that the user is actively using the machine. This means whatever you do, you want to minimize or ideally avoid any disruptions to the user's usage.
-Assume that the only display that is never used by the user is NE18NZ2, which means you can use it freely.
+Assume that all connected physical displays are showing things that the user needs to see, which means you shouldn't launch windows in front of any user windows.
 If possible, never steal focus away from the user onto stuff that you launch.
+If you launch things, it's fine if they put stuff in the OS taskbar. That is not considered disruptive.
+
+There should be two PA278QGV monitors and one NE18NZ2 monitors. The NE18NZ2 should be disconnected via Windows display settings and must remain disconnected because connecting it causes issues with G-SYNC/VRR.
 
 After changing a runnable application, open it on NE18NZ2 and validate the change yourself as part of finishing the work. Don't ask for permission to open it, and don't ask whether the result looks right. Report what you verified and what you could not.
 
