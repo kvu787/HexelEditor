@@ -68,7 +68,7 @@ Any logs for that application session must be put in that log folder.
 
 ## Conversations
 
-Record verbatim and commit all conversations in a folder named `Conversations` located at the root of this Git repo.
+Record verbatim and commit all conversations (meaning all user prompts and agent responses) in a folder named `Conversations` located at the root of this Git repo.
 Record and commit at the end of every turn.
 Use one file per conversation.
 Prefix these files with the PowerShell evaluation of `[DateTime]::UtcNow.ToString("yyyy-MM-dd_HH-mm") + "_UTC"`.
