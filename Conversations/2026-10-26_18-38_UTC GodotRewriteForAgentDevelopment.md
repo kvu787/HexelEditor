@@ -307,3 +307,73 @@ Both, in different places. The agent workflow runs the project through the Godot
 **What the difference means.** The engine-run project is a Debug build (`TOOLS` defined, unoptimized C#) inside the editor binary, which is the right thing for iteration: one `dotnet build` and the next run picks it up, no export step. The exported build is optimized C# in the release template with no editor code, which is what ships and what latency numbers should come from. Today `Measure.ps1` and the PresentMon figures in `Findings.md` measure the engine-run Debug project; pointing `Measure.ps1` at the exported build is a small change.
 
 One thing I noticed: `Application/project.godot` is modified and uncommitted in the working tree, from the "Open project in godot editor which normalizes things" commit's follow-on changes; I left it alone.
+
+## User
+
+i updated agents.md.
+
+due to g-sync/vrr issues, i've had to disconnect NE18NZ2. i want you to see if you can do non-disruptive wpf and godot development in which you can't launch anything that covers the user's open windows. in other words, if you launch any windows, they must be behind any existing windows.
+
+## Assistant
+
+The probe settles the mechanism: a window pushed to `HWND_BOTTOM` while still hidden stays at the bottom when shown with `SW_SHOWNA` or `SW_SHOWNOACTIVATE` (8 windows above it, only Program Manager below), and the foreground never moved. Restoring from minimized puts a window on top, so that route is out. Reading the files I'll change, then teaching the guard the new rule.
+
+## Assistant
+
+Wiring the last two scripts (the Godot validation's closing line and `Measure.ps1`), then starting both full validations back to back in the background: the WPF editor's, then the Godot experiment's, each putting its window behind everything on the primary display under the guard's new rule.
+
+## Assistant
+
+WPF passed cleanly: its window sat "behind 8 windows, in front of 0". The Godot pass could not even start: every spot in the taskbar strip had a user window reaching under it. Checking which windows those are, then widening the search (lower in the strip, and the other display's taskbar strip too).
+
+## Assistant
+
+Both displays are fully covered right now: Age of Empires IV fills the primary one and a fullscreen browser window fills the other, so there is no pixel anywhere a window could first appear unseen, and the probe correctly refused to run. The WPF editor's approach does not care (it puts itself at the bottom before it is shown), but Godot's window is first shown by the engine. Two experiments on a desktop of their own, where nothing can be seen: whether a minimized window can be brought out at the bottom of the Z-order, and how long Godot's window exists hidden before the engine shows it.
+
+## Assistant
+
+The minimized route is dead: restoring through `SetWindowPlacement` raises the window to the top, and the two tricks that avoided the restore left it minimized. The useful number is the other one: **Godot's window exists hidden for 609 ms before the engine shows it** (created 152 ms after launch, shown at 761 ms). A launcher polling every millisecond can push the hidden window to the bottom of the Z-order at its final bounds in that time, and the probe already showed a window pushed down while hidden stays down when shown. Implementing that, with the taskbar-strip spot kept as a fallback for when it exists.
+
+## Assistant
+
+Two findings from that probe: a window created topmost, as the engine creates its `no_focus` window, comes to the front when shown even after being pushed to the bottom while hidden, which is exactly what the real run showed; and DWM refuses cloaking from another process. The engine's later style updates, though, leave a window alone once it is non-topmost. So the remaining lever is what the window draws while it is briefly in front: nothing, if it starts fully transparent. Checking how the engine implements transparent windows and mouse passthrough, and probing a transparent Godot window's alpha on a desktop of its own.
+
+## Assistant
+
+The compiler works; it refused one line: `CBT_CREATEWND.lpcs` is an ANSI `CREATESTRUCT` pointer unless `UNICODE` is defined. Fixing that and rerunning the build and the probe.
+
+## Assistant
+
+The hook attached 5 ms after launch and the window was created at the bottom, but the engine's `WS_EX_TOPMOST` survived (Windows ignores style edits in the creation hook) and that bit is what makes the show raise the window. The way around it: the hook vetoes activation itself, so the engine can run without `no_focus`, whose only purpose was to avoid the focus steal, and then the window is never topmost at all. Changing the hook and probing again.
+
+## Assistant
+
+The Godot pass now passes on the real desktop with both displays fully covered: hooked 5 ms after launch, created behind 8 windows and in front of none, shown 765 ms later still there, guard clean. Running both complete validations once more for the record while I write up the mechanism.
+
+## Assistant
+
+Both complete validations are running; the commits and the conversation record follow their results, so I'll pick up when the monitor reports.
+
+## Assistant
+
+The WPF window is still being raised, and each attempt on the real desktop put the editor in front of your Claude window, which is the thing this must not do. I'm moving the WPF experiments onto a desktop of their own with a stand-in user window, logging whether the in-process hook even installed and what the window's owner does, and will only return to the real desktop once it is behind the stand-in there.
+
+## Assistant
+
+The WPF window now stays at the bottom through its show on the isolated desktop. Running the complete WPF validation on the real desktop.
+
+## Assistant
+
+**Yes, for both.** With NE18NZ2 gone, both validations now put their one real window on the primary display at the bottom of the Z-order, behind every window you have open, and the guard fails any run whose window was in front of one of yours that it overlaps, for even one frame. Both complete validations pass while Age of Empires IV fills one display and a fullscreen browser window fills the other, so that no pixel anywhere was free of a window of yours. A taskbar button is the only sign of a run, as your updated `AGENTS.md` allows.
+
+**What the guard now judges.** `DisruptionGuard.ps1` keeps the old rules (foreground, mouse capture, cursor clip, and the display rule when a display is set aside) and adds one: a visible window of the run with a visible, uncloaked, unminimized window of yours below it in the Z-order that it overlaps is a violation, named with the window it covered. It is judged the moment the window is shown or moved and every five milliseconds in between. Sixteen hand-written observations exercise the rules. It earned its keep today: it caught the Godot window in front of Age of Empires IV on the first attempt and the WPF editor in front of your Claude window on the fourth, which means the editor did cover your Claude window for a few seconds on each of two runs before I moved the experiments onto a desktop of their own.
+
+**WPF.** The editor places itself at the bottom before it is shown (`Place`, from `SourceInitialized`). That held on the first run and not on the second, when WPF's own show put the window on top; the difference was that a window kept out of the taskbar is owned by a hidden window WPF makes. Now the window goes in the taskbar, a CBT hook on the editor's own thread creates every top-level window at the bottom and refuses activation, and the window answers every `WM_WINDOWPOSCHANGING` with the bottom, so whoever asks to move it, it goes behind. `Validate.ps1` defaults to this; `-Display` still names a display set aside, if one is ever connected again.
+
+**Godot.** The engine shows its own window, and three facts made that hard from outside, each established with probe windows on a desktop of their own: a window created topmost, which `no_focus` makes it, comes to the front the moment it is shown whatever was done to its order while hidden; a window's order cannot be changed from another process until its thread reads messages, which the engine's first does as it shows the window; and DWM refuses cloaking from another process. Restoring from minimized raises too. So the placing is done inside the engine's own thread: `BehindHook/BehindHook.c`, 30 lines of C built by `BehindHook/Build.ps1` with the Visual C++ compiler, is installed on the engine's main thread by `Scripts/HookedLaunch.ps1` as the process starts. Every top-level window the thread creates is created at the bottom and marked not to activate, and every activation and focus change is refused, which lets the engine run without `no_focus`, so the window is never topmost. Hooked 5 ms after launch, created behind 8 windows 96 ms after launch, shown 765 ms after launch still behind them. `StartForAgent.ps1` (renamed from `StartOnDisplay.ps1`) is the launcher; `Build.ps1` builds the hook.
+
+**What this costs.** A hook library that needs the Visual C++ build tools; a dependence on Windows keeping the Z-order of a newly created window, which the guard would report the day it changed; and, when your windows cover the whole display as they did today, a window nobody can see. `PrintWindow` still photographs it there, the engine's own captures and checks do not care, and the WPF editor's hidden host never needed a display anyway.
+
+**One thing in `AGENTS.md`:** it still says to open the app on NE18NZ2 after a change, two paragraphs after saying NE18NZ2 must stay disconnected. I followed the second; both validations open the app behind everything on the primary display instead.
+
+Commits: the guard's Z-order rule; the WPF editor behind everything; the Godot hook and launcher; the documentation; and this conversation as `[cnv]`. Findings are in `GodotAgentDevExperiment/Findings.md` under "Behind every window, with no display set aside".
