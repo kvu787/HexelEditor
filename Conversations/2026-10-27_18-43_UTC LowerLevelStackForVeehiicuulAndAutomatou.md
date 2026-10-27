@@ -591,3 +591,36 @@ Sources:
 - [windows versions on crates.io](https://crates.io/api/v1/crates/windows)
 - [windows-rs releases](https://github.com/microsoft/windows-rs/releases)
 - [Unable to generate bindings using windows-bindgen (Rust forum)](https://users.rust-lang.org/t/unable-to-generate-bindings-using-windows-binding-for-a-project-around-the-windows-api-the-windows-crate/134484)
+
+## User
+
+okay, create a file at "C:\Users\k\Repository\HexelEditor\Documentation\RewritePlan.md".
+
+it must include a section that describes the vision for veehiicuul, a section that describes the vision for automatou, and a section that describes the complete list of dependencies that are allowed.
+
+this will be a starting point for the plan that i will write and maintain myself. the dependency section is important because it will be one way that i guide agent development in the right direction and maintain some familiarity with the code base without drawing valuable attention away from creative direction towards implementation.
+
+[Request interrupted by user]
+
+okay, create a file at "C:\Users\k\Repository\HexelEditor\Documentation\RewritePlan.md".
+
+it must include a section that describes the vision for veehiicuul, a section that describes the vision for automatou, and a section that describes the complete list of dependencies that are allowed.
+
+this will be a starting point for the plan that i will write and maintain myself. the dependency section is important because it will be one way that i guide agent development in the right direction and maintain some familiarity with the code base without drawing valuable attention away from creative direction towards implementation.
+
+## Assistant
+
+The plan file is written; I'm tightening one overly wide table, then committing it.
+
+## Assistant
+
+I created [RewritePlan.md](../Documentation/RewritePlan.md) and committed it as `2b439af`. It has three parts:
+
+- **Veehiicuul and Automatou.** The visions as you described them in this conversation, plus decisions already written down in your repositories. For Veehiicuul that's the orthographic 3/4 camera, SimplePaint, planar driving and MovementMechanics.md. For Automatou it's the world-builder-and-runner idea, automata, hex footprint sizes, six facings and the open question about long units. It links to those documents instead of copying them.
+- **Allowed dependencies.** The complete allowlist, in four tables: language and build tools, Windows components, crates, and content and verification tools. The crates table has all 20, including everything serde, serde_json and the windows crates bring in, each marked run time, build time or tool. After the tables come the rules agents follow, a table of what's ruled out and what to use instead, and a list of what gets built in the repositories and what each piece ports from.
+
+Three things to check:
+
+- **It uses committed windows-bindgen output, not the `windows` crate.** That was my last recommendation, and you hadn't picked between them. To keep the crate instead, change the windows-bindgen, windows-metadata and windows-default rows, the first rule, and the "Other Windows bindings" row under Not allowed.
+- **A few vision lines come from your earlier work, not from this conversation.** Planar driving comes from Zoom Tracks' description and the Veehiicuul2 and Veehiicuul3 requirements, and "low input latency and smooth, consistent frames" from the InputLatency and PresentMon work. Cut them if they don't belong.
+- **Crate versions are major versions, not exact ones.** Exact versions belong in Cargo.lock, which the plan says to commit. The list matches what crates.io shows today: the windows crates at 0.100, serde 1.0.229 and serde_json 1.0.154.
