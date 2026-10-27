@@ -377,3 +377,11 @@ The WPF window now stays at the bottom through its show on the isolated desktop.
 **One thing in `AGENTS.md`:** it still says to open the app on NE18NZ2 after a change, two paragraphs after saying NE18NZ2 must stay disconnected. I followed the second; both validations open the app behind everything on the primary display instead.
 
 Commits: the guard's Z-order rule; the WPF editor behind everything; the Godot hook and launcher; the documentation; and this conversation as `[cnv]`. Findings are in `GodotAgentDevExperiment/Findings.md` under "Behind every window, with no display set aside".
+
+## User
+
+is this conversation recorded as per agents.md?
+
+## Assistant
+
+Yes. Every turn of this conversation, including the last one, is in `Conversations/2026-10-26_18-38_UTC GodotRewriteForAgentDevelopment.md`, committed as `3e08b4c [cnv] Record putting both applications behind every window of the user's`. Before this question the file held 43 User and Assistant entries and the working tree was clean. This question and this answer are appended to the same file and committed with the `[cnv]` prefix as well.
