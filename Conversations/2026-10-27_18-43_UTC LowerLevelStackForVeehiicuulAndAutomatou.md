@@ -235,3 +235,60 @@ P/Invoke is the same job. `[DllImport("json")] static extern IntPtr json_parse(.
 ## Who writes step 1
 
 Either a person or an AI writes it by hand, or a tool reads the header for you. For ordinary C libraries that tool is rust-bindgen, which uses Clang to read the header; it would need LLVM installed, which this machine doesn't have. For Windows APIs it's windows-bindgen, reading Microsoft's metadata. So "Rust can't read C++ headers" really means Rust's compiler can't. Something has to translate them, and the choice is who translates and what checks the translation.
+
+## User
+
+okay, let's rewind a bit. i want to discuss rust vs c++ vs c.
+
+creative direction will be done by me while everything else will be done with opus 5.5, fable 5.1, gpt 6.1 sol, gpt 6 astra, and similar models and the successors of those models.
+
+given this, what would you use c, c++, and rust for if at all, and explain why.
+
+## Assistant
+
+**Short version: Rust for everything you ship, C++ only as a test tool that reads Microsoft's headers, and C not at all, except as the calling convention Rust uses to talk to Windows.**
+
+## What changes when models write everything
+
+- **Nobody reads every line, so the checking has to be mechanical.** What used to decide a language for a solo developer, such as how pleasant it is to write and how long it takes to learn, barely counts. What counts is how many mistakes turn into errors before the program runs, and how close to the cause they show up.
+- **Several model families will work on the same code for years.** Code one model writes gets changed by a successor from another vendor. Anything the code relies on has to be stated somewhere the next model can't miss.
+- **Writing code is nearly free; finding a bug far from its cause isn't.** The expensive failures are the silent ones.
+
+## Rust: the game, the editor, the simulation and the platform layer
+
+- **Safe Rust can't produce undefined behavior on its own.** Use after free, reading past the end of an array, data races and uninitialized memory are compile errors, not crashes that show up later somewhere else.
+- **Rules live in the types.** Ownership, lifetimes, exhaustive enums and `Result` carry over to the next model as compile errors. A comment saying "don't use this after Release" depends on the next model reading it.
+- **One toolchain, one style.** cargo builds and tests. rustfmt and clippy give every model the same formatting and the same warnings, enforced rather than requested.
+- **Crates enforce the architecture.** The simulation crate can't reach Windows if it doesn't depend on it, and Automatou's programs crate can forbid `unsafe` outright.
+
+The costs:
+
+- **The platform layer is `unsafe`.** Keep it in one crate that wraps Win32, DX12, DXGI, DirectWrite and GameInput in safe types, and put `#![forbid(unsafe_code)]` on every other crate. Its declarations are hand-written and checked against the headers, as discussed.
+- **There's less DX12 written in Rust for models to have learned from.** Most of what's hard about DX12 is the API itself (barriers, fences, descriptor heaps), which carries over between languages. Only the syntax differs.
+- **The borrow checker can push a model into workarounds,** such as cloning everything or wrapping state in `Rc<RefCell<...>>`. Plain data in arrays, referred to by index, avoids most of that, and games tend to want that shape anyway.
+- **Full builds are slower than C's.** Incremental `cargo check` is fast enough for an agent's edit-and-compile loop.
+
+## C++: a test tool that reads the real headers
+
+C++ is the only language whose compiler reads d3d12.h and GameInput.h exactly as Microsoft wrote them. That makes it the reference for checking Rust's declarations: a small C++ program reports where each method sits and how each struct is laid out, and a Rust test compares. It's also useful for a short experiment that copies a Microsoft C++ sample exactly before porting it.
+
+I wouldn't write the games in it:
+
+- **Its worst mistakes are silent.** Undefined behavior can pass every test and fail later, far from the cause; Veehiicuul3's iterator bug only showed up in Debug.
+- **It has many dialects, and the compiler accepts all of them.** Raw or smart pointers, exceptions or error codes, old or modern idioms: four model families will mix them, and nothing enforces one.
+- **Its rules live in comments and conventions.** AddressSanitizer, clang-tidy and the D3D12 debug layer catch some of it, but they're opt-in and partial.
+
+I'd switch to C++ for everything if you decide you want Microsoft's C++ libraries directly (D3D12MA, DirectXTex, MiniEngine), or if the bindings turn out much bigger than expected after the first slice.
+
+## C: only as the boundary
+
+C does nothing that Rust or C++ can't, and it's the worst of the three for unattended work. There's no automatic cleanup, no generics and no bounds checking, and errors are handled by convention. Most mistakes are silent, and there's more code to make them in. Its one role is the calling convention: `extern "C"` and COM's C-compatible layout are how Rust calls Windows. BehindHook.c is fine as it is, and your own engine won't need it, because it creates its own window.
+
+## Two things outside the question
+
+- **Shaders stay HLSL, compiled by dxc,** whatever the host language. SimplePaint carries over unchanged.
+- **Keep tuning values in data the editor changes,** not in code: handling, colors, timings. Then creative direction never means editing source, in any language.
+
+## Why this holds as models improve
+
+Better models make fewer mistakes, but the code keeps growing, and the mistakes C++ leaves silent are the expensive ones to find. A compile-time guarantee doesn't depend on how often a model gets things wrong. Meanwhile Rust's main cost here, writing and checking bindings, is mechanical work that gets cheaper with every model.
