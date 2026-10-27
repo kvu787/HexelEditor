@@ -36,71 +36,75 @@ This is the complete list. Anything not on it is not allowed: no other crate, li
 
 ### Language and build tools
 
-| Dependency                                        | Version    | Used for                                           |
-| ------------------------------------------------- | ---------- | -------------------------------------------------- |
-| Rust, edition 2024, target x86_64-pc-windows-msvc | Stable     | All game, editor, simulation and platform code     |
-| cargo, rustfmt, clippy                            | With Rust  | Building and testing, formatting, lints            |
-| MSVC, from Visual Studio 2026                     | 14.51      | Linking; compiling the GameInput header check      |
-| Windows SDK                                       | 10.0.26100 | Import libraries; dxc                              |
-| dxc, from the Windows SDK                         | 1.9        | Compiling HLSL shaders at build time               |
-| PowerShell                                        | 7          | Build.ps1, Run.ps1, Validate.ps1 and other scripts |
-| Git                                               | Any        | Version control                                    |
+- **Rust stable**, edition 2024, target x86_64-pc-windows-msvc: all game, editor, simulation and platform code.
+- **cargo, rustfmt and clippy**, which come with Rust: building and testing, formatting, and lints.
+- **MSVC 14.51**, from Visual Studio 2026: linking, and compiling the GameInput header check.
+- **Windows SDK 10.0.26100**: import libraries, and dxc.
+- **dxc 1.9**, from the Windows SDK: compiling HLSL shaders at build time.
+- **PowerShell 7**: Build.ps1, Run.ps1, Validate.ps1 and other scripts.
+- **Git**: version control.
 
 ### Windows components
 
-| Dependency                 | Version    | Used for                                                                             |
-| -------------------------- | ---------- | ------------------------------------------------------------------------------------ |
-| Win32                      | Windows 11 | Window, messages, raw mouse and keyboard, cursor, timing, watching the export folder |
-| Direct3D 12 and DXGI       | Windows 11 | Rendering and presenting frames                                                      |
-| DirectWrite                | Windows 11 | Text                                                                                 |
-| WIC                        | Windows 11 | Decoding textures inside glb files                                                   |
-| COM and Shell file dialogs | Windows 11 | Opening and saving levels                                                            |
-| GameInput redistributable  | 3.5.283    | Gamepads                                                                             |
+Everything here except GameInput is part of Windows 11.
 
-GameInput isn't part of Windows. Its three runtime files, GameInputRedist.dll, GameInputBridge.dll and GameInputRawInputProxy.exe, ship beside the executable and are copied from Veehiicuul2/ThirdParty/GameInput.
+- **Win32**: the window, messages, raw mouse and keyboard, the cursor, timing, and watching the export folder.
+- **Direct3D 12 and DXGI**: rendering and presenting frames.
+- **DirectWrite**: text.
+- **WIC**: decoding textures inside glb files.
+- **COM and the Shell file dialogs**: opening and saving levels.
+- **GameInput redistributable 3.5.283**: gamepads. Its three runtime files, GameInputRedist.dll, GameInputBridge.dll and GameInputRawInputProxy.exe, ship beside the executable and are copied from Veehiicuul2/ThirdParty/GameInput.
 
 The C runtime is linked statically (`-C target-feature=+crt-static`), so the games don't need the Visual C++ Redistributable.
 
 ### Crates
 
-| Crate                          | Version | When           | Used for                                                              |
-| ------------------------------ | ------- | -------------- | --------------------------------------------------------------------- |
-| windows-core                   | 0.100   | Run time       | COM support for the generated bindings and the GameInput declarations |
-| windows-link                   | 0.100   | Run time       | Linking to Windows DLLs                                               |
-| windows-result                 | 0.100   | Run time       | HRESULT and Windows errors                                            |
-| windows-strings                | 0.100   | Run time       | Windows string types                                                  |
-| windows-interface              | 0.100   | Build time     | The interface macro, for the GameInput declarations                   |
-| windows-implement              | 0.100   | Build time     | Implementing a COM interface in Rust, only where Windows requires one |
-| windows-bindgen                | 0.100   | Tool and tests | Generating the Windows bindings and checking them                     |
-| windows-metadata               | 0.100   | Tool and tests | Reading Microsoft's metadata, for windows-bindgen                     |
-| windows-default                | 0.100   | Tool and tests | Microsoft's metadata, for windows-bindgen                             |
-| serde, with the derive feature | 1.0     | Run time       | Reading and writing level files and glTF JSON                         |
-| serde_core                     | 1.0     | Run time       | serde's core traits                                                   |
-| serde_derive                   | 1.0     | Build time     | serde's derive macros                                                 |
-| serde_json                     | 1.0     | Run time       | JSON                                                                  |
-| itoa                           | 1.0     | Run time       | Integer formatting, for serde_json                                    |
-| zmij                           | 1.0     | Run time       | Floating-point formatting, for serde_json                             |
-| memchr                         | 2       | Run time       | Fast byte search, for serde_json                                      |
-| syn                            | 2       | Build time     | Parsing Rust code, for the macros                                     |
-| quote                          | 1.0     | Build time     | Generating Rust code, for the macros and windows-bindgen              |
-| proc-macro2                    | 1.0     | Build time     | Token streams, for the macros and windows-bindgen                     |
-| unicode-ident                  | 1.0     | Build time     | Identifier rules, for syn and proc-macro2                             |
-
-Build-time crates run while compiling and aren't part of the games. Tool crates run only when the bindings are regenerated or checked.
-
 - Every windows crate uses the same version as windows-bindgen.
 - Cargo.lock is committed, and every crate is vendored with `cargo vendor`, so builds work offline and no version changes without a commit.
 
+#### Run time
+
+These are compiled into the games.
+
+- **windows-core 0.100**: COM support for the generated bindings and the GameInput declarations.
+- **windows-link 0.100**: linking to Windows DLLs.
+- **windows-result 0.100**: HRESULT and Windows errors.
+- **windows-strings 0.100**: Windows string types.
+- **serde 1.0, with the derive feature**: reading and writing level files and glTF JSON.
+- **serde_core 1.0**: serde's core traits.
+- **serde_json 1.0**: JSON.
+- **itoa 1.0**: integer formatting, for serde_json.
+- **zmij 1.0**: floating-point formatting, for serde_json.
+- **memchr 2**: fast byte search, for serde_json.
+
+#### Build time
+
+These run while compiling and aren't part of the games.
+
+- **windows-interface 0.100**: the interface macro, for the GameInput declarations.
+- **windows-implement 0.100**: implementing a COM interface in Rust, only where Windows requires one.
+- **serde_derive 1.0**: serde's derive macros.
+- **syn 2**: parsing Rust code, for the macros.
+- **quote 1.0**: generating Rust code, for the macros and windows-bindgen.
+- **proc-macro2 1.0**: token streams, for the macros and windows-bindgen.
+- **unicode-ident 1.0**: identifier rules, for syn and proc-macro2.
+
+#### Tool and tests
+
+These run only when the bindings are regenerated or checked.
+
+- **windows-bindgen 0.100**: generating the Windows bindings and checking them.
+- **windows-metadata 0.100**: reading Microsoft's metadata, for windows-bindgen.
+- **windows-default 0.100**: Microsoft's metadata, for windows-bindgen.
+
 ### Content, verification and measurement
 
-| Dependency                              | Version                   | Used for                                                                                                                       |
-| --------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Blender, with its bundled glTF exporter | 4.5.14                    | Modeling, and exporting glb files headless with `blender -b --python`                                                          |
-| D3D12 debug layer                       | Windows 11 Graphics Tools | Failing a run on any API misuse                                                                                                |
-| WARP                                    | Windows 11                | GPU checks that don't depend on the graphics card                                                                              |
-| PresentMon                              | 2.6.0                     | Frame pacing and latency                                                                                                       |
-| PIX                                     | Any                       | Optional: inspecting a captured frame                                                                                          |
-| HexelEditor's validation scripts        | This repository           | IsolatedDesktop.ps1, DisruptionGuard.ps1, Windowing.ps1 and CaptureWindow.ps1, ported for validating without disturbing anyone |
+- **Blender 4.5.14, with its bundled glTF exporter**: modeling, and exporting glb files headless with `blender -b --python`.
+- **D3D12 debug layer**, from Windows 11's Graphics Tools: failing a run on any API misuse.
+- **WARP**, part of Windows 11: GPU checks that don't depend on the graphics card.
+- **PresentMon 2.6.0**: frame pacing and latency.
+- **PIX**, optional: inspecting a captured frame.
+- **HexelEditor's validation scripts**, from this repository: IsolatedDesktop.ps1, DisruptionGuard.ps1, Windowing.ps1 and CaptureWindow.ps1, ported for validating without disturbing anyone.
 
 ### Rules
 
@@ -114,32 +118,30 @@ Build-time crates run while compiling and aren't part of the games. Tool crates 
 
 Examples of what this list rules out, so nobody has to ask:
 
-| Kind                               | Examples                                     | Instead                                   |
-| ---------------------------------- | -------------------------------------------- | ----------------------------------------- |
-| Game engines and frameworks        | Godot, Unity, Unreal, Bevy, Fyrox            | The games' own code                       |
-| Window, input and graphics layers  | winit, wgpu, SDL, GLFW, gilrs                | Win32, Direct3D 12 and GameInput directly |
-| UI toolkits                        | Dear ImGui, egui, Qt, WinUI, web views       | The games' own immediate-mode UI          |
-| Other Windows bindings             | The windows and windows-sys crates           | Generated bindings                        |
-| C and C++ libraries                | D3D12MA, DirectXTex, DirectXMath, MiniEngine | The games' own code                       |
-| Microsoft SDKs beyond those listed | The D3D12 Agility SDK                        | Windows 11's built-in Direct3D 12         |
-| Asset crates                       | gltf, image                                  | The games' own glb loader; WIC            |
-| Math and utility crates            | glam, nalgebra, rand                         | The games' own code                       |
+- **Game engines and frameworks**: Godot, Unity, Unreal, Bevy, Fyrox. Use the games' own code instead.
+- **Window, input and graphics layers**: winit, wgpu, SDL, GLFW, gilrs. Use Win32, Direct3D 12 and GameInput directly instead.
+- **UI toolkits**: Dear ImGui, egui, Qt, WinUI, web views. Use the games' own immediate-mode UI instead.
+- **Other Windows bindings**: the windows and windows-sys crates. Use the generated bindings instead.
+- **C and C++ libraries**: D3D12MA, DirectXTex, DirectXMath, MiniEngine. Use the games' own code instead.
+- **Microsoft SDKs beyond those listed**: the D3D12 Agility SDK. Use Windows 11's built-in Direct3D 12 instead.
+- **Asset crates**: gltf, image. Use the games' own glb loader and WIC instead.
+- **Math and utility crates**: glam, nalgebra, rand. Use the games' own code instead.
 
 ### Built in the repositories instead
 
-| Piece                                                                             | Ports from or checks against                                                |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| GameInput declarations                                                            | GameInput.h, through the header check                                       |
-| Vector, matrix and quaternion math                                                | -                                                                           |
-| glb loader: the binary container, plus structs for the glTF fields Blender writes | Exports of Kevin's Blender models                                           |
-| Renderer: GPU memory and uploads, SimplePaint, orthographic 3/4 camera, picking   | SimplePaint's specification and GPU tests in Veehiicuul/3dTestScene_CppDx12 |
-| Immediate-mode editor UI, with DirectWrite text                                   | -                                                                           |
-| NURBS evaluation, curve offsetting, triangulation, barrier meshes                 | Veehiicuul/Blender/TrackBuilder/TrackBuilder.py and its fixtures            |
-| Hex grid math, painting, flood fill, undo                                         | HexelEditor_Wpf's core and its tests                                        |
-| Vehicle movement, barrier collision, checkpoints, laps                            | MovementMechanics.md; Veehiicuul2's Racing2D                                |
-| Automatou's simulation, automaton contract and programs                           | Automatou2                                                                  |
-| Footprint sizer                                                                   | Automatou1's ArtDirection.md                                                |
-| Deterministic random numbers                                                      | -                                                                           |
-| A stable hash for state-hash tests                                                | -                                                                           |
-| Logging to LogOutput                                                              | -                                                                           |
-| Driven input, frame readback, replay                                              | HexelEditor_Wpf's and GodotAgentDevExperiment's checks                      |
+Where a piece has existing code or a spec behind it, that's named after it.
+
+- **GameInput declarations.** Checked against GameInput.h by the header check.
+- **Vector, matrix and quaternion math.**
+- **glb loader**: the binary container, plus structs for the glTF fields Blender writes. Checked against exports of Kevin's Blender models.
+- **Renderer**: GPU memory and uploads, SimplePaint, the orthographic 3/4 camera, picking. Ported from SimplePaint's specification and the GPU tests in Veehiicuul/3dTestScene_CppDx12.
+- **Immediate-mode editor UI**, with DirectWrite text.
+- **Track geometry**: NURBS evaluation, curve offsetting, triangulation, barrier meshes. Ported from Veehiicuul/Blender/TrackBuilder/TrackBuilder.py and its fixtures.
+- **Hex grid**: math, painting, flood fill, undo. Ported from HexelEditor_Wpf's core and its tests.
+- **Driving**: vehicle movement, barrier collision, checkpoints, laps. Ported from MovementMechanics.md and Veehiicuul2's Racing2D.
+- **Automatou's simulation**: the automaton contract and programs. Ported from Automatou2.
+- **Footprint sizer.** Follows Automatou1's ArtDirection.md.
+- **Deterministic random numbers.**
+- **A stable hash**, for state-hash tests.
+- **Logging**, to LogOutput.
+- **Driven input, frame readback and replay.** Ported from the checks in HexelEditor_Wpf and GodotAgentDevExperiment.
