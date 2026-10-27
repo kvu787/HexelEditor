@@ -202,12 +202,17 @@ public partial class App : Application
             // Placing the window from SourceInitialized puts it on the wanted display before its first frame,
             // so it never appears anywhere else first, and ShowActivated leaves the keyboard and mouse with
             // whoever is using the machine. Together these let a validation run share a desk with its user.
+            KeepWindowsBehind();
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             window.ShowActivated = false;
-            // No taskbar button means nothing to appear on the user's taskbar, and nothing to flash there if
-            // the window is ever denied the foreground, which is how Windows answers a refused activation.
-            window.ShowInTaskbar = false;
+            // In the taskbar after all. Kept out of it, the window is owned by a hidden window WPF makes for
+            // the purpose, and an owned window shown without activation came up at the top of the Z-order on
+            // some runs and at the bottom on others, in front of the user's windows on the former. A window
+            // of its own stays where it is created. The button is a button, not a flash: with activation
+            // refused outright there is nothing for the taskbar to flash about.
+            window.ShowInTaskbar = true;
             window.SourceInitialized += (_, _) => Place(window, bounds);
+            window.ContentRendered += (_, _) => Log.Write(BehindHookReport);
         }
         window.Show();
         var project = e.Args.FirstOrDefault(File.Exists);
@@ -234,13 +239,82 @@ public partial class App : Application
         // inside a window activates that window. WS_EX_NOACTIVATE refuses the foreground outright, so no
         // amount of focusing here, or stray clicking, can pull the user's keyboard over to this window.
         SetWindowLongPtrW(handle, ExtendedStyle, GetWindowLongPtrW(handle, ExtendedStyle) | NoActivateStyle);
-        SetWindowPos(handle, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, NoZOrder | NoActivate | NoOwnerZOrder);
+        // Placed at the bottom of the Z-order as well as at its bounds, while it is still hidden, so that it
+        // covers nothing of the user's on this display or any other. That alone is not enough: WPF's own
+        // show brought the window to the top of the Z-order on some runs and left it at the bottom on
+        // others. So every change to this window's position is answered from here on: Windows asks the
+        // window first, with WM_WINDOWPOSCHANGING, and the window answers that it goes to the bottom,
+        // whoever asked and whatever they asked for.
+        SetWindowPos(handle, HwndBottom, bounds.X, bounds.Y, bounds.Width, bounds.Height, NoActivate | NoOwnerZOrder);
+        HwndSource.FromHwnd(handle)?.AddHook(StayAtBottom);
     }
+
+    private static IntPtr StayAtBottom(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message == WindowPositionChanging)
+        {
+            // WINDOWPOS is { HWND hwnd; HWND hwndInsertAfter; int x, y, cx, cy; UINT flags; }.
+            var flags = (uint)Marshal.ReadInt32(lParam, 32);
+            Marshal.WriteIntPtr(lParam, IntPtr.Size, HwndBottom);
+            Marshal.WriteInt32(lParam, 32, (int)((flags & ~NoZOrder) | NoActivate));
+        }
+        return IntPtr.Zero;
+    }
+
+    private const int WindowPositionChanging = 0x0046;
+    private const uint NoZOrder = 0x0004;
+
+    // A window pushed to the bottom while hidden stays there when shown without activation, except when the
+    // process has the right to take the foreground, which a process started from the foreground process has:
+    // then Windows shows the window at the top whatever its order was. So every top-level window this thread
+    // creates is created at the bottom, through a CBT hook on the thread itself, and every activation is
+    // refused there too. The hook is this process's own and reaches no other thread or process.
+    private static void KeepWindowsBehind()
+    {
+        behindHook = (code, wParam, lParam) =>
+        {
+            if (code == HcbtCreateWindow)
+            {
+                // CBT_CREATEWND is { CREATESTRUCTW* lpcs; HWND hwndInsertAfter; }; CREATESTRUCTW puts
+                // hwndParent at 24 and style at 48 on x64.
+                // Every window that is not a child window, owned or not: an owned window's "parent" is its
+                // owner, and the editor's own window is owned when it is kept out of the taskbar.
+                var createStruct = Marshal.ReadIntPtr(lParam, 0);
+                var style = Marshal.ReadInt32(createStruct, 48);
+                if ((style & ChildStyle) == 0)
+                {
+                    Marshal.WriteIntPtr(lParam, IntPtr.Size, HwndBottom);
+                    behindCreations++;
+                }
+            }
+            else if (code == HcbtActivate)
+            {
+                behindActivationsRefused++;
+                return 1;
+            }
+            return CallNextHookEx(IntPtr.Zero, code, wParam, lParam);
+        };
+        behindHookHandle = SetWindowsHookExW(CbtHook, behindHook, IntPtr.Zero, GetCurrentThreadId());
+        Log.Write(behindHookHandle == IntPtr.Zero
+            ? $"Behind hook failed to install: error {Marshal.GetLastWin32Error()}."
+            : "Behind hook installed on the interface thread.");
+    }
+
+    // What the hook saw, for the session log once the window is up.
+    private static int behindCreations, behindActivationsRefused;
+    internal static string BehindHookReport => $"Behind hook: {behindCreations} top-level windows created at the bottom, {behindActivationsRefused} activations refused.";
+
+    private delegate IntPtr HookProcedure(int code, IntPtr wParam, IntPtr lParam);
+    // Kept for the life of the process: a collected delegate would leave Windows calling freed code.
+    private static HookProcedure? behindHook;
+    private static IntPtr behindHookHandle;
+    private const int CbtHook = 5, HcbtCreateWindow = 3, HcbtActivate = 5, ChildStyle = 0x40000000;
 
     private const string ShowWithoutFocusOption = "--show-without-focus";
     private const string LogFramesOption = "--log-frames";
     private const string MeasureOutputOption = "--measure-output";
-    private const uint NoZOrder = 0x0004, NoActivate = 0x0010, NoOwnerZOrder = 0x0200;
+    private const uint NoActivate = 0x0010, NoOwnerZOrder = 0x0200;
+    private static readonly IntPtr HwndBottom = 1;
     private const int ExtendedStyle = -20;
     private static readonly IntPtr NoActivateStyle = 0x08000000;
     private const uint FailCriticalErrors = 0x0001, NoGeneralProtectionFaultErrorBox = 0x0002, NoOpenFileErrorBox = 0x8000;
@@ -262,5 +336,14 @@ public partial class App : Application
 
     [DllImport("kernel32.dll")]
     private static extern uint SetErrorMode(uint mode);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetWindowsHookExW(int type, HookProcedure procedure, IntPtr module, uint threadId);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 #pragma warning restore SYSLIB1054
 }

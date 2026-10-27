@@ -1,9 +1,12 @@
 #Requires -Version 7.0
 param(
-    # The one display set aside for validation. Everything else on the machine belongs to the user.
-    [string] $Display = 'NE18NZ2',
+    # A display set aside for validation, on which the editor may appear in front. Without one, every display
+    # belongs to the user, and the editor appears on the primary one behind every window they have open.
+    [string] $Display = '',
     # Omits the pass that puts the real window on that display. The checks that need no display still run.
     [switch] $SkipDisplayPass,
+    # Runs only that pass, on the build that is already there, for looking into it on its own.
+    [switch] $OnlyDisplayPass,
     # Runs the hidden rendering host on this desktop rather than one of its own. See Verify.ps1: it lets the
     # host take the foreground and show a popup on the primary display, so it is for an idle machine only.
     [switch] $SameDesktop
@@ -43,7 +46,8 @@ New-Item -ItemType Directory -Path $validationPath -Force | Out-Null
 
 $locked = Test-SessionLocked
 $inputDesktop = Get-InputDesktopName
-Write-Output "Validation display: $Display. Session locked: $locked (input desktop '$inputDesktop')."
+$passName = if ($Display) { "Display pass on $Display" } else { 'Behind-everything pass on the primary display' }
+Write-Output "Validation display: $(if ($Display) { $Display } else { 'none; the window goes behind every window of the user' }). Session locked: $locked (input desktop '$inputDesktop')."
 Write-Output "Artifacts: $validationPath"
 Write-Output ''
 
@@ -69,6 +73,10 @@ try {
 
     # Build, unit tests, and the real interface driven inside a hidden rendering host. None of this needs a
     # display, so it is the part that works whether the machine is locked or not.
+    if ($OnlyDisplayPass) {
+        Add-Step -Name 'Build, tests and hidden-host verification' -Outcome 'skipped' -Detail 'asked for with -OnlyDisplayPass'
+    }
+    else {
     try {
         & (Join-Path $PSScriptRoot 'Verify.ps1') -SameDesktop:$SameDesktop 2>&1 | ForEach-Object { $verifyOutput.Add($_) }
         $verifyOutput | Set-Content -LiteralPath (Join-Path $validationPath 'Verify.txt')
@@ -79,40 +87,42 @@ try {
         $verifyOutput | Set-Content -LiteralPath (Join-Path $validationPath 'Verify.txt')
         Add-Step -Name 'Build, tests and hidden-host verification' -Outcome 'failed' -Detail "$_"
     }
+    }
 
     if ($null -eq $watch) { $watch = Start-DisruptionWatch -AllowedMonitor $Display }
 
     # The real window at real pixel density on the validation display. This is the only step that puts
     # anything on a screen, and the only one that cannot work without an input desktop.
     if ($SkipDisplayPass) {
-        Add-Step -Name "Display pass on $Display" -Outcome 'skipped' -Detail 'asked for with -SkipDisplayPass'
+        Add-Step -Name $passName -Outcome 'skipped' -Detail 'asked for with -SkipDisplayPass'
     }
     elseif (Get-Process -Name 'HexelEditor' -ErrorAction SilentlyContinue) {
-        Add-Step -Name "Display pass on $Display" -Outcome 'skipped' -Detail 'an editor is already running and this pass will not touch it'
+        Add-Step -Name $passName -Outcome 'skipped' -Detail 'an editor is already running and this pass will not touch it'
     }
     else {
         $editor = $null
         try {
-            $editor = & (Join-Path $RepositoryRoot 'Run.ps1') -Display $Display -PassThru
+            $editor = if ($Display) { & (Join-Path $RepositoryRoot 'Run.ps1') -Display $Display -PassThru } else { & (Join-Path $RepositoryRoot 'Run.ps1') -Behind -PassThru }
             Register-WatchedProcess -Watch $watch -ProcessId $editor.Id
             $capture = Join-Path $validationPath 'Editor.png'
             & (Join-Path $PSScriptRoot 'CaptureWindow.ps1') -OutputPath $capture -ProcessId $editor.Id -TimeoutMilliseconds 20000 | Out-Null
             $image = Test-ImageHasContent -Path $capture
-            $detail = "$($image.Width) x $($image.Height), $($image.DistinctColors) distinct colors"
+            $order = Get-WindowZOrderReport -Handle (Get-WindowHandle -ProcessId $editor.Id)
+            $detail = "$($image.Width) x $($image.Height), $($image.DistinctColors) distinct colors; $order"
             if ($image.HasContent) {
-                Add-Step -Name "Display pass on $Display" -Outcome 'passed' -Detail $detail
+                Add-Step -Name $passName -Outcome 'passed' -Detail $detail
             }
             elseif ($locked) {
                 # A window on a desktop that is not being displayed has nothing to draw with. That is a fact
                 # about the machine's state, not a defect, so it is recorded rather than failed.
-                Add-Step -Name "Display pass on $Display" -Outcome 'skipped' -Detail "the session is locked and the window could not draw ($detail)"
+                Add-Step -Name $passName -Outcome 'skipped' -Detail "the session is locked and the window could not draw ($detail)"
             }
             else {
-                Add-Step -Name "Display pass on $Display" -Outcome 'failed' -Detail "the capture came back blank ($detail)"
+                Add-Step -Name $passName -Outcome 'failed' -Detail "the capture came back blank ($detail)"
             }
         }
         catch {
-            Add-Step -Name "Display pass on $Display" -Outcome 'failed' -Detail "$_"
+            Add-Step -Name $passName -Outcome 'failed' -Detail "$_"
         }
         finally {
             if ($editor) {
@@ -164,7 +174,8 @@ $steps | Format-Table -AutoSize | Out-String | Set-Content -LiteralPath (Join-Pa
 Write-Output ''
 if ($summary.Passed) {
     $covered = if ($SameDesktop) { 'the display pass' } else { 'the run' }
-    Write-Output "Validation passed. Nothing of $covered appeared outside $Display, took the foreground, or confined the cursor."
+    $where = if ($Display) { "appeared outside $Display" } else { "covered a window of the user's" }
+    Write-Output "Validation passed. Nothing of $covered $where, took the foreground, or confined the cursor."
     Write-Output "Artifacts: $validationPath"
 }
 else {
