@@ -292,3 +292,90 @@ C does nothing that Rust or C++ can't, and it's the worst of the three for unatt
 ## Why this holds as models improve
 
 Better models make fewer mistakes, but the code keeps growing, and the mistakes C++ leaves silent are the expensive ones to find. A compile-time guarantee doesn't depend on how often a model gets things wrong. Meanwhile Rust's main cost here, writing and checking bindings, is mechanical work that gets cheaper with every model.
+
+## User
+
+okay, that makes sense.
+
+now, lay out all the dependencies that you would need to implement veehiicuul and automatou as i described.
+
+## Assistant
+
+**Short version: to run, the games need Windows 11 and one Microsoft redistributable, GameInput. To build them, you need the Rust toolchain, which isn't installed yet, plus Microsoft's linker, the Windows SDK and dxc, which are. There are no crates: everything else is written in the repositories.**
+
+## Run time
+
+What a player's machine needs.
+
+| Component                 | Comes from                  | Used for                                                  |
+| ------------------------- | --------------------------- | --------------------------------------------------------- |
+| Win32                     | Windows                     | Window, input, cursor, timing, watching the export folder |
+| Direct3D 12 and DXGI      | Windows                     | Rendering and presenting frames                           |
+| DirectWrite               | Windows                     | Text in the editor UI                                     |
+| File dialogs              | Windows                     | Opening and saving levels                                 |
+| WIC                       | Windows                     | PNG or JPEG textures in glb files, if any                 |
+| GameInput 3.5.283 runtime | Microsoft.GameInput package | Gamepads; shipped beside the exe, no install              |
+
+GameInput is the only one that isn't part of Windows. Veehiicuul2 already vendors it, with its provenance and hashes, in `ThirdParty/GameInput`: GameInputRedist.dll, GameInputBridge.dll and GameInputRawInputProxy.exe.
+
+One that's easy to miss: by default, a Rust executable on Windows needs vcruntime140.dll from the Visual C++ Redistributable, which Windows doesn't include. Linking the C runtime statically (`-C target-feature=+crt-static` in `.cargo/config.toml`) removes that.
+
+## Build time
+
+| Tool                                                                   | Status                      | Used for                                                  |
+| ---------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------- |
+| Rust stable for x86_64-pc-windows-msvc, with cargo, rustfmt and clippy | Not installed; needs rustup | Compiling, testing, formatting, linting                   |
+| MSVC 14.51 (Visual Studio 2026)                                        | Installed                   | Linking; compiling the C++ header check                   |
+| Windows SDK 10.0.26100                                                 | Installed                   | Import libraries; the headers the check compiles          |
+| dxc 1.9, from the Windows SDK                                          | Installed                   | Compiling HLSL to DXIL at build time, embedded in the exe |
+| PowerShell 7.6                                                         | Installed                   | Build.ps1, Run.ps1, Validate.ps1                          |
+| Git 2.55                                                               | Installed                   | Version control                                           |
+
+## Content
+
+Blender 4.5.14 is installed, with its bundled glTF exporter, and runs headless with `blender -b --python`. ExportGlb.py already exists. Custom properties go out as glTF extras, which is how SimplePaint parameters reach the game.
+
+## Verification and measurement
+
+| Tool                                   | Status                   | Used for                                                 |
+| -------------------------------------- | ------------------------ | -------------------------------------------------------- |
+| D3D12 debug layer (d3d12SDKLayers.dll) | Installed                | Failing a run on any API misuse                          |
+| WARP (d3d10warp.dll)                   | Part of Windows          | GPU checks that don't depend on the graphics card        |
+| PresentMon 2.6.0                       | In %UserProfile%\Program | Frame pacing and latency                                 |
+| HexelEditor's validation scripts       | In HexelEditor           | Own desktop, disruption guard, window capture; ported    |
+| C++ header check                       | To write                 | Comparing Rust's declarations with the real headers      |
+| PIX                                    | Not installed; optional  | Inspecting a captured frame when something renders wrong |
+
+## Written in the repositories
+
+Everything a crate or an engine would otherwise provide. The right column is what each piece ports from or is checked against.
+
+| Piece                                                                               | Reference                                                  |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Rust declarations for Win32, D3D12, DXGI, DirectWrite, WIC, file dialogs, GameInput | The SDK and GameInput headers, through the C++ check       |
+| Vector, matrix and quaternion math                                                  | -                                                          |
+| JSON reader and writer, for glTF and level files                                    | -                                                          |
+| glb loader, limited to what Blender exports: meshes, nodes, materials, extras       | Exports of your own Blender models                         |
+| Renderer: GPU memory and uploads, SimplePaint, orthographic 3/4 camera, picking     | SimplePaint's specification and GPU tests                  |
+| Immediate-mode editor UI, with DirectWrite text                                     | -                                                          |
+| NURBS evaluation, curve offsetting, triangulation, barrier meshes                   | TrackBuilder.py and its fixtures; Veehiicuul2's NURBS code |
+| Hex grid math, painting, flood fill, undo                                           | HexelEditor's core and its tests                           |
+| Vehicle movement, barrier collision, checkpoints, laps                              | MovementMechanics.md; Veehiicuul2's Racing2D               |
+| Automatou's simulation, automaton contract and programs                             | Automatou2                                                 |
+| Footprint sizer: fitting a model to a ring of hex cells                             | Automatou1's ArtDirection.md                               |
+| Deterministic random numbers                                                        | -                                                          |
+| A stable hash for state-hash tests                                                  | -                                                          |
+| Logging to LogOutput                                                                | -                                                          |
+| Driven input, frame readback, replay                                                | The HexelEditor and Godot experiment checks                |
+
+The random numbers and the stable hash are on the list because Rust's standard library deliberately doesn't provide them. It has no seedable generator that gives the same sequence on every run, and its default hasher's algorithm may change between Rust versions, which would break saved golden hashes.
+
+## Not needed for what you described
+
+- **Audio.** You didn't mention it. When you want it, XAudio2 is part of Windows and already on this machine.
+- **The D3D12 Agility SDK.** It's only for D3D12 features newer than Windows 11's built-in runtime, and nothing described needs them.
+- **Networking, a physics engine, or importers for anything but glb.**
+- **Crates.** Rust's standard library counts as the language.
+
+Rust is the only install this needs; PIX is optional.
+
