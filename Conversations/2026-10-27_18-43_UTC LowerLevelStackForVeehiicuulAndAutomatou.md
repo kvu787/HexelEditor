@@ -616,11 +616,42 @@ The plan file is written; I'm tightening one overly wide table, then committing 
 
 I created [RewritePlan.md](../Documentation/RewritePlan.md) and committed it as `2b439af`. It has three parts:
 
-- **Veehiicuul and Automatou.** The visions as you described them in this conversation, plus decisions already written down in your repositories. For Veehiicuul that's the orthographic 3/4 camera, SimplePaint, planar driving and MovementMechanics.md. For Automatou it's the world-builder-and-runner idea, automata, hex footprint sizes, six facings and the open question about long units. It links to those documents instead of copying them.
-- **Allowed dependencies.** The complete allowlist, in four tables: language and build tools, Windows components, crates, and content and verification tools. The crates table has all 20, including everything serde, serde_json and the windows crates bring in, each marked run time, build time or tool. After the tables come the rules agents follow, a table of what's ruled out and what to use instead, and a list of what gets built in the repositories and what each piece ports from.
+- **Veehiicuul and Automatou.** Each section covers the vision you described in this conversation, plus decisions already written down in your repositories.
+  - For Veehiicuul, that's the orthographic 3/4 camera, SimplePaint, flat 2D driving and MovementMechanics.md.
+  - For Automatou, it's the world-builder-and-runner idea, automata, hex footprint sizes, six facings, and the open question of how long units like the carrier and serpent fit hex footprints.
+  - Both sections link to those documents instead of copying them.
+- **Allowed dependencies.** This is the complete allowlist, in four tables: language and build tools, Windows components, crates, and content and verification tools. The crates table lists all 20 crates, including everything serde, serde_json and the windows crates bring in. Each crate is marked run time, build time or tool.
+- **Supporting lists.** After the tables come:
+  - the rules agents follow;
+  - a table of what's ruled out, with what to use instead;
+  - a list of what gets built in the repositories, with the existing code each piece is ported from.
 
 Three things to check:
 
-- **It uses committed windows-bindgen output, not the `windows` crate.** That was my last recommendation, and you hadn't picked between them. To keep the crate instead, change the windows-bindgen, windows-metadata and windows-default rows, the first rule, and the "Other Windows bindings" row under Not allowed.
-- **A few vision lines come from your earlier work, not from this conversation.** Planar driving comes from Zoom Tracks' description and the Veehiicuul2 and Veehiicuul3 requirements, and "low input latency and smooth, consistent frames" from the InputLatency and PresentMon work. Cut them if they don't belong.
-- **Crate versions are major versions, not exact ones.** Exact versions belong in Cargo.lock, which the plan says to commit. The list matches what crates.io shows today: the windows crates at 0.100, serde 1.0.229 and serde_json 1.0.154.
+- **It uses committed windows-bindgen output, not the `windows` crate.** That was my last recommendation, and you hadn't chosen between them. To keep the crate instead, change:
+  - the windows-bindgen, windows-metadata and windows-default rows;
+  - the first rule;
+  - the "Other Windows bindings" row under Not allowed.
+- **A few vision lines come from your earlier work, not from this conversation.**
+  - Flat 2D driving comes from Zoom Tracks' description and the Veehiicuul2 and Veehiicuul3 requirements.
+  - "Low input latency and smooth, consistent frames" comes from the InputLatency and PresentMon work.
+
+  Cut them if they don't belong.
+- **The plan lists only major crate versions.** Exact versions belong in Cargo.lock, which the plan says to commit. The list matches what crates.io shows today: the windows crates at 0.100, serde 1.0.229 and serde_json 1.0.154.
+
+The conversation record is committed as `333366f`.
+
+## User
+
+rewrite C:\Users\k\Repository\HexelEditor\Documentation\RewritePlan.md to not use any tables because those are cumbersome for me to edit
+
+## Assistant
+
+I rewrote [RewritePlan.md](../Documentation/RewritePlan.md) without tables and committed it as `93dd098`. The content is unchanged; only the layout is different:
+
+- **Every former table row is now one bullet,** in the form `- **Name version**: what it's for.` To add or remove a dependency, you add or delete one line, with no padding or columns to keep aligned.
+- **Crates are grouped under three headings,** Run time, Build time, and Tool and tests, instead of having a "When" column. All 20 are still there: 10, 7 and 3.
+- **Not allowed** bullets name the kind, the examples, and what to use instead.
+- **Built in the repositories instead** bullets name the piece and what it's ported from or checked against. I added short labels to the longer ones (Track geometry, Hex grid, Driving) so each bullet starts with a name.
+
+The file has no table lines left and is still ASCII only.
