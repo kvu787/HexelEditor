@@ -379,3 +379,157 @@ The random numbers and the stable hash are on the list because Rust's standard l
 
 Rust is the only install this needs; PIX is optional.
 
+
+## User
+
+i will use the windows rust crate. rewrite your answer.
+also, what is used for reading/writing json from rust?
+
+## Assistant
+
+Rewritten answer is drafted and checked against crates.io; now saving it to the conversation record and committing.
+
+## Assistant
+
+**Short version:**
+- **To run,** the games need Windows 11 and GameInput, as before.
+- **To build,** you need the Rust toolchain, which isn't installed yet, plus MSVC, the Windows SDK and dxc, which are.
+- **The crates** are `windows` and, if you agree, serde and serde_json for JSON.
+- **The only hand-written bindings left** are GameInput's, because it isn't in the `windows` crate.
+
+## Run time
+
+What a player's machine needs.
+
+| Component                 | Comes from                  | Used for                                                  |
+| ------------------------- | --------------------------- | --------------------------------------------------------- |
+| Win32                     | Windows                     | Window, input, cursor, timing, watching the export folder |
+| Direct3D 12 and DXGI      | Windows                     | Rendering and presenting frames                           |
+| DirectWrite               | Windows                     | Text in the editor UI                                     |
+| File dialogs              | Windows                     | Opening and saving levels                                 |
+| WIC                       | Windows                     | PNG or JPEG textures in glb files, if any                 |
+| GameInput 3.5.283 runtime | Microsoft.GameInput package | Gamepads; shipped beside the exe, no install              |
+
+The `windows` crate adds nothing here. It's compiled into the executable and calls the same Windows DLLs directly.
+
+GameInput is the only one that isn't part of Windows. Veehiicuul2 already includes a copy of it, with its source and hashes, in `ThirdParty/GameInput`: GameInputRedist.dll, GameInputBridge.dll and GameInputRawInputProxy.exe.
+
+One that's easy to miss: by default, a Rust executable on Windows needs vcruntime140.dll from the Visual C++ Redistributable, which Windows doesn't include. Linking the C runtime statically (`-C target-feature=+crt-static` in `.cargo/config.toml`) removes that requirement.
+
+## Crates
+
+- **windows 0.62.2**, for Win32, D3D12, DXGI, DirectWrite, WIC and file dialogs. It brings in windows-core, windows-link, windows-result, windows-strings, windows-implement and windows-interface. Its default `std` feature also brings in windows-collections, windows-future and windows-numerics.
+- **serde 1.0.229 with its derive feature, and serde_json 1.0.154**, for level files and the JSON inside glb files, if you agree (see below). They bring in serde_core, serde_derive, itoa, memchr and zmij.
+- **syn, quote, proc-macro2 and unicode-ident.** The `windows` crate and serde's derive both use them to generate code at build time. Nothing from them ends up in the executable.
+
+Vendor them with `cargo vendor`, so builds work offline and a version never changes unless you choose to change it. Fetching them the first time needs the network.
+
+The `windows` crate is split into hundreds of features, and you enable only the ones you use:
+
+| Feature                                                 | For                                      |
+| ------------------------------------------------------- | ---------------------------------------- |
+| Win32_Foundation                                        | Handles, HWND, HRESULT                   |
+| Win32_UI_WindowsAndMessaging                            | The window, the message loop, the cursor |
+| Win32_UI_Input, Win32_UI_Input_KeyboardAndMouse         | Raw mouse and keyboard                   |
+| Win32_UI_HiDpi                                          | Per-monitor DPI                          |
+| Win32_Graphics_Gdi                                      | Monitors and their bounds                |
+| Win32_Graphics_Direct3D, Win32_Graphics_Direct3D12      | Rendering                                |
+| Win32_Graphics_Dxgi, Win32_Graphics_Dxgi_Common         | Adapters, swap chain, formats            |
+| Win32_Graphics_DirectWrite                              | Text                                     |
+| Win32_Graphics_Imaging                                  | WIC, for textures in glb files           |
+| Win32_System_Com, Win32_UI_Shell, Win32_UI_Shell_Common | File dialogs                             |
+| Win32_System_Threading, Win32_Security                  | Events for GPU fences and other waits    |
+| Win32_System_LibraryLoader                              | Loading GameInputRedist.dll              |
+| Win32_Storage_FileSystem, Win32_System_IO               | Watching the export folder               |
+| Win32_System_Performance                                | High-resolution timing                   |
+
+The crate leaves out any function whose signature uses a type from a feature you haven't enabled. That's why Win32_Security is on the list: CreateEventW takes a security attributes pointer.
+
+## Build time
+
+| Tool                                                                   | Status                      | Used for                                                  |
+| ---------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------- |
+| Rust stable for x86_64-pc-windows-msvc, with cargo, rustfmt and clippy | Not installed; needs rustup | Compiling, testing, formatting, linting                   |
+| MSVC 14.51 (Visual Studio 2026)                                        | Installed                   | Linking; compiling the GameInput header check             |
+| Windows SDK 10.0.26100                                                 | Installed                   | Import libraries for linking                              |
+| dxc 1.9, from the Windows SDK                                          | Installed                   | Compiling HLSL to DXIL at build time, embedded in the exe |
+| PowerShell 7.6                                                         | Installed                   | Build.ps1, Run.ps1, Validate.ps1                          |
+| Git 2.55                                                               | Installed                   | Version control                                           |
+
+## Content
+
+Blender 4.5.14 is installed with its bundled glTF exporter, and it runs headless with `blender -b --python`. ExportGlb.py already exists. Custom properties are exported as glTF extras, which is how SimplePaint parameters reach the game.
+
+## Verification and measurement
+
+| Tool                                   | Status                   | Used for                                                 |
+| -------------------------------------- | ------------------------ | -------------------------------------------------------- |
+| D3D12 debug layer (d3d12SDKLayers.dll) | Installed                | Failing a run on any API misuse                          |
+| WARP (d3d10warp.dll)                   | Part of Windows          | GPU checks that don't depend on the graphics card        |
+| PresentMon 2.6.0                       | In %UserProfile%\Program | Frame pacing and latency                                 |
+| HexelEditor's validation scripts       | In HexelEditor           | Own desktop, disruption guard, window capture; ported    |
+| GameInput header check                 | To write, in C++         | Comparing GameInput's Rust declarations with GameInput.h |
+| PIX                                    | Not installed; optional  | Inspecting a captured frame when something renders wrong |
+
+## Written in the repositories
+
+These are the pieces that neither Windows nor the crates provide. The right column is the existing code or spec each piece ports from or is checked against.
+
+| Piece                                                                             | Reference                                                  |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| GameInput declarations, with windows-core's interface macro                       | GameInput.h, through the header check                      |
+| Vector, matrix and quaternion math                                                | -                                                          |
+| glb loader: the binary container, plus structs for the glTF fields Blender writes | Exports of your own Blender models                         |
+| Renderer: GPU memory and uploads, SimplePaint, orthographic 3/4 camera, picking   | SimplePaint's specification and GPU tests                  |
+| Immediate-mode editor UI, with DirectWrite text                                   | -                                                          |
+| NURBS evaluation, curve offsetting, triangulation, barrier meshes                 | TrackBuilder.py and its fixtures; Veehiicuul2's NURBS code |
+| Hex grid math, painting, flood fill, undo                                         | HexelEditor's core and its tests                           |
+| Vehicle movement, barrier collision, checkpoints, laps                            | MovementMechanics.md; Veehiicuul2's Racing2D               |
+| Automatou's simulation, automaton contract and programs                           | Automatou2                                                 |
+| Footprint sizer: fitting a model to a ring of hex cells                           | Automatou1's ArtDirection.md                               |
+| Deterministic random numbers                                                      | -                                                          |
+| A stable hash for state-hash tests                                                | -                                                          |
+| Logging to LogOutput                                                              | -                                                          |
+| Driven input, frame readback, replay                                              | The HexelEditor and Godot experiment checks                |
+
+Two items on that list exist only because Rust's standard library deliberately doesn't provide them:
+- **Deterministic random numbers.** It has no random generator you can seed to get the same sequence on every run.
+- **A stable hash.** Its default hasher's algorithm may change between Rust versions, which would break saved golden hashes.
+
+## Not needed for what you described
+
+- **Audio.** You didn't mention it. When you want it, XAudio2 is part of Windows and already on this machine.
+- **The D3D12 Agility SDK.** It's only for D3D12 features newer than Windows 11's built-in runtime, and nothing you described needs them.
+- **Networking, a physics engine, or importers for anything but glb.**
+- **Any other crate.** Nothing else on the list needs one.
+
+## Reading and writing JSON
+
+**serde_json, used with serde's derive, is what nearly every Rust program uses.** You describe the file as Rust structs, and serde generates the code that reads and writes them:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct Level {
+    checkpoints: Vec<Checkpoint>,
+    decorations: Vec<Decoration>,
+}
+
+let level: Level = serde_json::from_str(&text)?;
+let text = serde_json::to_string_pretty(&level)?;
+```
+
+A missing field or a value of the wrong type fails the load, and the error gives its line and column.
+
+Why I'd take it here:
+- **Models know it better than any alternative,** because it's by far the most used.
+- **It adds little to what the `windows` crate already brings.** serde_json adds serde_core, itoa, memchr and zmij; the derive adds serde and serde_derive. The code-generation crates are already there.
+- **The structs are the file format.** There's no parsing code to write or test.
+- **It covers glb too.** A glb file is a 12-byte header followed by two chunks, which is easy to read by hand. The JSON chunk goes through serde_json into structs that declare only the glTF fields Blender writes, so no glTF crate is needed.
+
+If you'd rather not:
+- **nanoserde** also derives JSON reading and writing, with no dependencies at all, but models know it far less well.
+- **A hand-written reader and writer** is a few hundred lines plus tests, as in my previous list.
+
+Rust is still the only install this needs; PIX is still optional.
