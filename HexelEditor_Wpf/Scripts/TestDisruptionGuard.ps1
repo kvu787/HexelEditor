@@ -19,7 +19,7 @@ $checked = 0
 function Test-Rule {
     param(
         [Parameter(Mandatory)][string] $Name,
-        [Parameter(Mandatory)][PSCustomObject] $Allowed,
+        [AllowNull()][PSCustomObject] $Allowed,
         [Parameter(Mandatory)] $Observation,
         [Parameter(Mandatory)][int] $ExpectedViolations
     )
@@ -99,6 +99,29 @@ Test-Rule -Name 'A window of the run taking the foreground is a violation' -Allo
 
 Test-Rule -Name 'A window of the run capturing the mouse is a violation' -Allowed $allowed -ExpectedViolations 1 `
     -Observation (New-Observation -Kind 'MouseCaptured' -Watched $true `
+        -Left $screen.Left -Top $screen.Top -Right $screen.Right -Bottom $screen.Bottom)
+
+# Behind everything. With no display set aside, a window of the run may be on any display, and what it may
+# not be is in front of a window of the user's that it overlaps.
+Test-Rule -Name 'With no display set aside, a window of the run on a user display is allowed' -Allowed $null -ExpectedViolations 0 `
+    -Observation (New-Observation -Kind 'WindowShown' -Watched $true `
+        -Left ($screen.Left + 40) -Top ($screen.Top + 40) -Right ($screen.Right - 40) -Bottom ($screen.Bottom - 40))
+
+Test-Rule -Name 'With no display set aside, a window of the run moving on a user display is allowed' -Allowed $null -ExpectedViolations 0 `
+    -Observation (New-Observation -Kind 'WindowMoved' -Watched $true `
+        -Left ($screen.Left + 40) -Top ($screen.Top + 40) -Right ($screen.Right - 40) -Bottom ($screen.Bottom - 40))
+
+$covering = New-Observation -Kind 'WindowAboveUser' -Watched $true -Left ($screen.Left + 40) -Top ($screen.Top + 40) -Right ($screen.Right - 40) -Bottom ($screen.Bottom - 40)
+$covering.Covered = "explorer (4321) window 'Documents' [CabinetWClass] at 100,100 900,700"
+Test-Rule -Name "A window of the run in front of a user's window it overlaps is a violation" -Allowed $null -ExpectedViolations 1 -Observation $covering
+Test-Rule -Name 'That rule holds with a display set aside as well' -Allowed $allowed -ExpectedViolations 1 -Observation $covering
+
+Test-Rule -Name "A user's window in front of another of theirs is not the run's" -Allowed $null -ExpectedViolations 0 `
+    -Observation (New-Observation -Kind 'WindowAboveUser' -Watched $false `
+        -Left ($screen.Left + 40) -Top ($screen.Top + 40) -Right ($screen.Right - 40) -Bottom ($screen.Bottom - 40))
+
+Test-Rule -Name 'With no display set aside, the foreground rule still holds' -Allowed $null -ExpectedViolations 1 `
+    -Observation (New-Observation -Kind 'Foreground' -Watched $true `
         -Left $screen.Left -Top $screen.Top -Right $screen.Right -Bottom $screen.Bottom)
 
 if ($failures.Count -gt 0) { throw "Disruption guard rules failed:`n  - " + ($failures -join "`n  - ") }

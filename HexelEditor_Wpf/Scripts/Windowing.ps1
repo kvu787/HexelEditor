@@ -40,6 +40,21 @@ public static class NativeWindowing
         }, IntPtr.Zero);
         return best;
     }
+    // The process's top-level window of the given class, whether or not it is visible yet. For placing a
+    // window that its own program will show, in the time between its creation and that show.
+    public static IntPtr FindProcessWindowAny(int processId, string className)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows(delegate (IntPtr handle, IntPtr parameter)
+        {
+            int owner;
+            GetWindowThreadProcessId(handle, out owner);
+            if (owner != processId || ClassOf(handle) != className) return true;
+            found = handle;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr handle, out Rect bounds);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out Rect value, int size);
 
@@ -68,6 +83,75 @@ public static class NativeWindowing
         return frame.Right > frame.Left && frame.Bottom > frame.Top ? frame : window;
     }
     private const int ExtendedFrameBounds = 9;
+
+    // Puts a window at the bottom of the Z-order, behind every other window on the machine, at the given
+    // bounds, without activating it. A window pushed down while still hidden stays there when it is shown
+    // without activation, which is what lets a run put a window on a display someone is using without ever
+    // covering anything of theirs.
+    public static bool MoveBehind(IntPtr handle, int x, int y, int width, int height)
+    {
+        return SetWindowPos(handle, HwndBottom, x, y, width, height, NoActivate | NoOwnerZOrder);
+    }
+
+    // Where a window stands among the visible, titled, top-level windows: how many are above it and how many
+    // below, with the first few below named. The desktop and the taskbars are left out, since being above
+    // the wallpaper is not being in front of anyone.
+    public static string DescribeZOrder(IntPtr handle)
+    {
+        int above = 0, below = 0;
+        bool seen = false;
+        System.Collections.Generic.List<string> named = new System.Collections.Generic.List<string>();
+        for (IntPtr window = GetTopWindow(IntPtr.Zero); window != IntPtr.Zero; window = GetWindow(window, NextWindow))
+        {
+            if (window == handle) { seen = true; continue; }
+            if (!IsUserWindow(window)) continue;
+            if (seen) { below++; if (named.Count < 4) named.Add("'" + TitleOf(window) + "'"); } else above++;
+        }
+        return "behind " + above + " window" + (above == 1 ? "" : "s") + ", in front of " + below
+            + (named.Count > 0 ? " (" + string.Join(", ", named.ToArray()) + ")" : "");
+    }
+
+    // Visible, uncloaked, not minimized, with a title and some area, and not the shell's own desktop or
+    // taskbar windows.
+    public static bool IsUserWindow(IntPtr window)
+    {
+        if (!IsWindowVisible(window) || IsIconic(window) || IsCloaked(window)) return false;
+        Rect bounds;
+        if (!GetWindowRect(window, out bounds) || bounds.Right <= bounds.Left || bounds.Bottom <= bounds.Top) return false;
+        if (TitleOf(window).Length == 0) return false;
+        string className = ClassOf(window);
+        return className != "Progman" && className != "WorkerW" && className != "Shell_TrayWnd" && className != "Shell_SecondaryTrayWnd";
+    }
+
+    public static bool IsCloaked(IntPtr window)
+    {
+        int cloaked;
+        return DwmGetWindowAttributeInt(window, Cloaked, out cloaked, sizeof(int)) == 0 && cloaked != 0;
+    }
+
+    public static string TitleOf(IntPtr window)
+    {
+        System.Text.StringBuilder text = new System.Text.StringBuilder(512);
+        GetWindowTextW(window, text, text.Capacity);
+        return text.ToString();
+    }
+
+    public static string ClassOf(IntPtr window)
+    {
+        System.Text.StringBuilder text = new System.Text.StringBuilder(256);
+        GetClassNameW(window, text, text.Capacity);
+        return text.ToString();
+    }
+
+    private static readonly IntPtr HwndBottom = new IntPtr(1);
+    private const uint NoActivate = 0x0010, NoOwnerZOrder = 0x0200, NextWindow = 2;
+    private const int Cloaked = 14;
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetTopWindow(IntPtr handle);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr handle, uint command);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr handle);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassNameW(IntPtr handle, System.Text.StringBuilder text, int count);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")] private static extern int DwmGetWindowAttributeInt(IntPtr handle, int attribute, out int value, int size);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr handle, IntPtr deviceContext, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool PostMessageW(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr handle, System.Text.StringBuilder text, int count);
@@ -90,6 +174,49 @@ public static class NativeWindowing
 # Without this the display bounds come back in scaled units, and a window placed from them lands in the wrong
 # place on any display that is not at 100 percent. Already-aware processes answer with a failure, which is fine.
 try { [void] [NativeWindowing]::SetProcessDpiAwareness(2) } catch { }
+
+# Puts a window behind every other window, at the given bounds, activating nothing. Where a run puts a window
+# it wants to look at while the person at the machine keeps every one of theirs in front.
+function Move-WindowBehind {
+    param(
+        [Parameter(Mandatory)][IntPtr] $Handle,
+        [Parameter(Mandatory)][int] $X, [Parameter(Mandatory)][int] $Y,
+        [Parameter(Mandatory)][int] $Width, [Parameter(Mandatory)][int] $Height
+    )
+    if (-not [NativeWindowing]::MoveBehind($Handle, $X, $Y, $Width, $Height)) { throw 'SetWindowPos refused to move the window behind the others.' }
+}
+
+function Get-WindowZOrderReport {
+    param([Parameter(Mandatory)][IntPtr] $Handle)
+    [NativeWindowing]::DescribeZOrder($Handle)
+}
+
+# Waits, a millisecond at a time, for a process to create its top-level window of the given class, and
+# returns the handle while the window may still be hidden. A program that shows its own window creates it
+# some time before showing it, and that time is when a launcher can put it where it wants it.
+function Wait-WindowCreated {
+    param([Parameter(Mandatory)][int] $ProcessId, [Parameter(Mandatory)][string] $ClassName, [int] $TimeoutMilliseconds = 30000)
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    do {
+        $handle = [NativeWindowing]::FindProcessWindowAny($ProcessId, $ClassName)
+        if ($handle -ne [IntPtr]::Zero) { return $handle }
+        if ([DateTime]::UtcNow -ge $deadline) { throw "Process $ProcessId created no '$ClassName' window within $TimeoutMilliseconds ms." }
+        Start-Sleep -Milliseconds 1
+    } while ($true)
+}
+
+# The bounds a run's window takes on the primary display when it is to sit behind every other window: inside
+# the working area, away from its edges, at a size a real editor window has.
+function Get-BehindBounds {
+    param([int] $Width = 1600, [int] $Height = 1000)
+    $work = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    [PSCustomObject]@{
+        X = $work.X + 40
+        Y = $work.Y + 40
+        Width = [Math]::Min($Width, $work.Width - 80)
+        Height = [Math]::Min($Height, $work.Height - 80)
+    }
+}
 
 function Get-DisplayBounds {
     param([Parameter(Mandatory)][string] $Monitor)

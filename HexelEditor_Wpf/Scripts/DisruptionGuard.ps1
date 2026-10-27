@@ -4,14 +4,17 @@ $ErrorActionPreference = 'Stop'
 
 # Proves that an agent-driven run did not disturb whoever is using the machine, rather than asking the agent
 # to be careful. A run is disruptive if any of these happen:
-#   - a window of the run becomes visible outside the display set aside for validation, even for one frame
-#   - a window of the run moves onto one of the user's displays after being shown
+#   - a window of the run is in front of a window of the user's that it overlaps, even for one frame
+#   - with a display set aside for validation: a window of the run becomes visible outside it, or moves
+#     outside it after being shown
 #   - a window of the run takes the foreground, which takes the keyboard with it
 #   - a window of the run opens a dialog on a user display, or grabs the mouse
 #   - a window of the run confines the cursor, which steers the user's pointer
 # Visibility and activation are observed through SetWinEventHook, so the moment a window gains WS_VISIBLE is
-# recorded with the bounds it had at that moment. Polling cannot promise that: a window shown and then moved
-# between two samples would slip through, which is exactly the split-second flash this has to rule out.
+# recorded with the bounds it had at that moment, and judged against the Z-order at that moment. Polling
+# cannot promise that: a window shown and then moved between two samples would slip through, which is exactly
+# the split-second flash this has to rule out. The Z-order is sampled as well, every few milliseconds, for a
+# window that is raised after being shown.
 
 . (Join-Path $PSScriptRoot 'Windowing.ps1')
 
@@ -39,6 +42,8 @@ public sealed class DisruptionObservation
     public int Right { get; set; }
     public int Bottom { get; set; }
     public bool Watched { get; set; }
+    // For a window of the run found in front of a user's window: that window.
+    public string Covered { get; set; } = "";
 }
 
 // One watcher per run. Hooks are set on a dedicated thread that owns a message loop, because out-of-context
@@ -57,6 +62,10 @@ public sealed class DisruptionWatcher
     private readonly ConcurrentQueue<DisruptionObservation> observations = new ConcurrentQueue<DisruptionObservation>();
     private readonly ConcurrentDictionary<int, byte> watched = new ConcurrentDictionary<int, byte>();
     private readonly ConcurrentDictionary<string, byte> watchedNames = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+    // Process names are asked for on every sample of every window on the machine; the kernel's answer is
+    // slow, and a process id keeps its name for the length of a run.
+    private readonly ConcurrentDictionary<int, string> names = new ConcurrentDictionary<int, string>();
+    private readonly HashSet<long> reportedCoverings = new HashSet<long>();
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly WinEventDelegate callback;
     private readonly List<IntPtr> hooks = new List<IntPtr>();
@@ -168,6 +177,7 @@ public sealed class DisruptionWatcher
                         Watched = IsWatched(owner)
                     });
                 }
+                SampleZOrder();
                 Thread.Sleep(5);
             }
         });
@@ -221,6 +231,7 @@ public sealed class DisruptionWatcher
         GetWindowThreadProcessId(window, out processId);
         Rect bounds;
         GetWindowRect(window, out bounds);
+        bool watchedWindow = IsWatched(processId);
         observations.Enqueue(new DisruptionObservation
         {
             Kind = kind,
@@ -231,13 +242,85 @@ public sealed class DisruptionWatcher
             Title = TitleOf(window),
             Class = ClassOf(window),
             Left = bounds.Left, Top = bounds.Top, Right = bounds.Right, Bottom = bounds.Bottom,
-            Watched = IsWatched(processId)
+            Watched = watchedWindow
         });
+        // The moment a window of the run is shown or moved is the moment its place among the user's windows
+        // matters most, so it is judged right here rather than left to the next sample.
+        if (watchedWindow && (kind == "WindowShown" || kind == "WindowMoved")) ReportIfCovering(window);
     }
 
-    private static string NameOf(int processId)
+    // Every visible window of the run, checked against the windows below it in the Z-order.
+    private void SampleZOrder()
     {
-        try { return Process.GetProcessById(processId).ProcessName; } catch { return "<gone>"; }
+        for (IntPtr window = GetTopWindow(IntPtr.Zero); window != IntPtr.Zero; window = GetWindow(window, NextWindow))
+        {
+            if (!IsWindowVisible(window)) continue;
+            int owner;
+            GetWindowThreadProcessId(window, out owner);
+            if (IsWatched(owner)) ReportIfCovering(window);
+        }
+    }
+
+    // Reports a window of the run that is in front of a user's window it overlaps, each time it comes to be
+    // so, with the user's window named. The desktop and the taskbars do not count: being above the wallpaper
+    // is not being in front of anyone, and the taskbars are always on top of everything anyway. A cloaked
+    // window of the run does not count either: the desktop window manager draws nothing of it, wherever it
+    // stands, which is why a launcher cloaks a window it cannot place before the program shows it.
+    private void ReportIfCovering(IntPtr window)
+    {
+        Rect mine;
+        if (!IsWindowVisible(window) || !GetWindowRect(window, out mine) || mine.Right <= mine.Left || mine.Bottom <= mine.Top) return;
+        if (IsCloaked(window)) { lock (reportedCoverings) { reportedCoverings.Remove(window.ToInt64()); } return; }
+        for (IntPtr below = GetWindow(window, NextWindow); below != IntPtr.Zero; below = GetWindow(below, NextWindow))
+        {
+            if (!IsWindowVisible(below) || IsIconic(below) || IsCloaked(below)) continue;
+            int owner;
+            GetWindowThreadProcessId(below, out owner);
+            if (IsWatched(owner)) continue;
+            Rect theirs;
+            if (!GetWindowRect(below, out theirs) || theirs.Right <= theirs.Left || theirs.Bottom <= theirs.Top) continue;
+            if (mine.Left >= theirs.Right || mine.Right <= theirs.Left || mine.Top >= theirs.Bottom || mine.Bottom <= theirs.Top) continue;
+            string title = TitleOf(below);
+            if (title.Length == 0) continue;
+            string className = ClassOf(below);
+            if (className == "Progman" || className == "WorkerW" || className == "Shell_TrayWnd" || className == "Shell_SecondaryTrayWnd") continue;
+            // Reported when the window comes to be in front, not on every sample while it stays there, and
+            // again if it is put behind and then raised once more.
+            lock (reportedCoverings) { if (!reportedCoverings.Add(window.ToInt64())) return; }
+            int processId;
+            GetWindowThreadProcessId(window, out processId);
+            observations.Enqueue(new DisruptionObservation
+            {
+                Kind = "WindowAboveUser",
+                Milliseconds = clock.ElapsedMilliseconds,
+                ProcessId = processId,
+                ProcessName = NameOf(processId),
+                Window = window.ToInt64(),
+                Title = TitleOf(window),
+                Class = ClassOf(window),
+                Left = mine.Left, Top = mine.Top, Right = mine.Right, Bottom = mine.Bottom,
+                Watched = true,
+                Covered = NameOf(owner) + " (" + owner + ") window '" + title + "' [" + className + "] at " + theirs.Left + "," + theirs.Top + " " + theirs.Right + "," + theirs.Bottom
+            });
+            return;
+        }
+        // In front of nothing: a later raise is a new event.
+        lock (reportedCoverings) { reportedCoverings.Remove(window.ToInt64()); }
+    }
+
+    private string NameOf(int processId)
+    {
+        string name;
+        if (names.TryGetValue(processId, out name)) return name;
+        try { name = Process.GetProcessById(processId).ProcessName; } catch { name = "<gone>"; }
+        names[processId] = name;
+        return name;
+    }
+
+    private static bool IsCloaked(IntPtr window)
+    {
+        int cloaked;
+        return DwmGetWindowAttribute(window, CloakedAttribute, out cloaked, sizeof(int)) == 0 && cloaked != 0;
     }
 
     private static string TitleOf(IntPtr window)
@@ -276,6 +359,12 @@ public sealed class DisruptionWatcher
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect bounds);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetTopWindow(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+    private const uint NextWindow = 2;
+    private const int CloakedAttribute = 14;
     [DllImport("user32.dll")] private static extern bool GetClipCursor(out Rect bounds);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out int processId);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr window, StringBuilder text, int count);
@@ -354,12 +443,14 @@ function Get-InputDesktopName { [SessionState]::InputDesktopName() }
 
 function Start-DisruptionWatch {
     param(
-        [Parameter(Mandatory)][string] $AllowedMonitor,
+        # A display set aside for the run, on which its windows may appear in front. Without one, the run's
+        # windows may appear on any display, but only behind every window of the user's that they overlap.
+        [string] $AllowedMonitor = '',
         # The editor itself, plus the two processes Windows puts a window up for when a program dies badly.
         # A crash dialog on a user display is as disruptive as the editor appearing there.
         [string[]] $WatchNames = @('HexelEditor', 'WerFault', 'vsjitdebugger')
     )
-    $allowed = Get-DisplayBounds -Monitor $AllowedMonitor
+    $allowed = if ($AllowedMonitor) { Get-DisplayBounds -Monitor $AllowedMonitor } else { $null }
     $watcher = New-Object DisruptionWatcher
     foreach ($name in $WatchNames) { $watcher.WatchName($name) }
     $watcher.Start()
@@ -414,8 +505,10 @@ function Test-CursorConfined {
 # is exactly why the rules that decide need to be checkable without one.
 function Get-DisruptionViolations {
     param(
-        [Parameter(Mandatory)][PSCustomObject] $Allowed,
-        [Parameter(Mandatory)][string] $AllowedMonitor,
+        # The display set aside for the run, or null when its windows may go anywhere as long as they stay
+        # behind the user's.
+        [AllowNull()][PSCustomObject] $Allowed,
+        [string] $AllowedMonitor = '',
         [AllowEmptyCollection()][Parameter(Mandatory)] $Observations
     )
     $violations = @()
@@ -432,12 +525,16 @@ function Get-DisruptionViolations {
             continue
         }
         $where = "$($observation.ProcessName) ($($observation.ProcessId)) window '$($observation.Title)' [$($observation.Class)] at $($observation.Left),$($observation.Top) $($observation.Right),$($observation.Bottom) after $($observation.Milliseconds) ms"
-        $inside = (Test-WithinAllowedDisplay -Allowed $Allowed -Observation $observation) -or
+        # With no display set aside, a window may be anywhere: the Z-order rule below is what holds it to
+        # account, and it applies either way.
+        $inside = ($null -eq $Allowed) -or
+                  (Test-WithinAllowedDisplay -Allowed $Allowed -Observation $observation) -or
                   -not (Test-OnAnyDisplay -Observation $observation)
         switch ($observation.Kind) {
             'WindowShown' { if (-not $inside) { $violations += "A window became visible outside ${AllowedMonitor}: $where" } }
             'WindowMoved' { if (-not $inside) { $violations += "A window moved outside ${AllowedMonitor}: $where" } }
             'DialogShown' { if (-not $inside) { $violations += "A dialog opened outside ${AllowedMonitor}: $where" } }
+            'WindowAboveUser' { $violations += "A window of the run was in front of a user's window it overlaps: $where, covering $($observation.Covered)" }
             'Foreground' { $violations += "A window of the run took the foreground: $where" }
             'ForegroundSample' { $violations += "A window of the run took the foreground: $where" }
             'MouseCaptured' { $violations += "A window of the run captured the mouse: $where" }
@@ -455,7 +552,7 @@ function Stop-DisruptionWatch {
         Passed = $violations.Count -eq 0
         Violations = $violations
         AllowedMonitor = $Watch.AllowedMonitor
-        AllowedBounds = "$($Watch.Allowed.X),$($Watch.Allowed.Y) $($Watch.Allowed.Width) x $($Watch.Allowed.Height)"
+        AllowedBounds = if ($null -ne $Watch.Allowed) { "$($Watch.Allowed.X),$($Watch.Allowed.Y) $($Watch.Allowed.Width) x $($Watch.Allowed.Height)" } else { 'any display, behind every window of the user' }
         BaselineForegroundTitle = $watcher.BaselineForegroundTitle
         ForegroundChanges = $watcher.ForegroundChanges
         CursorClipChanges = $watcher.CursorClipChanges
