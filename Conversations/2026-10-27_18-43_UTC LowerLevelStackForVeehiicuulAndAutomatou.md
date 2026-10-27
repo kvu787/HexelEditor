@@ -149,3 +149,89 @@ The middle one gives you what you're asking for. The game depends on nothing but
 It's a bounded job. Veehiicuul3's renderer and text code call about 70 distinct COM methods across D3D12, DXGI and DirectWrite. You'd declare those interfaces up to the last method you call, the structs, enums and Win32 functions you use, and IUnknown, HRESULT and GUID yourself, which also drops `windows-core`. By my rough estimate that's a few thousand lines, not 35,901.
 
 **That changes my recommendation: since owning the whole stack is the point, I'd go with hand-written and checked.** Generated bindings are less to maintain, so they're the better choice only if the dependency doesn't bother you. The one thing I wouldn't do is hand-write them without the check.
+
+## User
+
+<!-- attach -->
+> Rust can’t read C++ headers, so someone has to write the Rust version of those declarations.
+
+this is the part i need to understand better.
+so, let's say i write a c/c++ library with a clear interface, like a json read/write library. if i want to use this library from c/c++, it should just involve including the header source and either the library source code or binaries compiled from the library source code. then, i can call the json read/write methods from my application.
+what exactly do i need to do to use this c/c++ library from rust code?
+
+## Assistant
+
+**A compiled library holds code and the names it exports. It doesn't record parameter types, struct layouts or anything else your program needs to call it correctly; that lives only in the header. C and C++ compilers read the header. Rust's compiler doesn't, so you give it the same information in Rust.**
+
+## What the header does in C++
+
+When you `#include "json.h"` and link `json.lib`, two separate things happen:
+
+- **The compiler reads the header.** It learns each function's parameter types, return type and calling convention, each struct's fields and their order, and the constants, macros and inline functions. It checks your calls against all of that.
+- **The linker reads json.lib.** It connects each call to the code by name. For C functions it has the names and nothing else: no parameter types, no struct layouts.
+
+## The same library from Rust
+
+Say the header is:
+
+```c
+typedef struct JsonDocument JsonDocument;
+typedef struct { int line; int column; const char* message; } JsonError;
+
+JsonDocument* json_parse(const char* text, size_t length, JsonError* error);
+const char*   json_get_string(const JsonDocument* document, const char* key);
+void          json_free(JsonDocument* document);
+```
+
+**1. Declare it in Rust.** This is a line-by-line translation of the header, and it's the step `#include` does for you in C:
+
+```rust
+use std::ffi::c_char;
+
+#[repr(C)]
+pub struct JsonDocument { _private: [u8; 0] }
+
+#[repr(C)]
+pub struct JsonError { pub line: i32, pub column: i32, pub message: *const c_char }
+
+#[link(name = "json")]
+unsafe extern "C" {
+    fn json_parse(text: *const c_char, length: usize, error: *mut JsonError) -> *mut JsonDocument;
+    fn json_get_string(document: *const JsonDocument, key: *const c_char) -> *const c_char;
+    fn json_free(document: *mut JsonDocument);
+}
+```
+
+`#[repr(C)]` makes Rust lay a struct out the way C does. Without it, Rust is free to reorder the fields.
+
+**2. Link it.** `#[link(name = "json")]` asks for json.lib, and a `build.rs` file tells cargo which folder it's in (`cargo:rustc-link-search=native=...`). To build from source instead, `build.rs` or `Build.ps1` runs cl.exe on the library first.
+
+**3. Wrap it.** You'd normally put a small safe Rust type around those calls: a `Document` that calls `json_free` when it's dropped, converts `&str` to C strings, checks for null, and ties a returned string's lifetime to its document. That's where rules the header only states in comments (who frees what, how long a returned pointer stays valid) become rules the Rust compiler enforces.
+
+## Why step 1 is the risky one
+
+Rust's compiler trusts your declarations completely, and the linker only checks names. Suppose step 1 had swapped two fields:
+
+```rust
+pub struct JsonError { pub column: i32, pub line: i32, pub message: *const c_char }
+```
+
+It compiles, links and runs, and every parse error reports the line as the column and the column as the line. Nothing anywhere notices. It's the same mistake as the D3D12 methods landing one place off, on a smaller scale.
+
+## C++ interfaces need one more layer
+
+Rust can call C functions, but not C++ classes, templates, overloads, `std::string` or exceptions. C++ has no standard binary layout for those; each compiler does its own thing. If your JSON library's interface is C++, you add a thin layer of `extern "C"` functions, written in C++, that call it, catch exceptions and return error codes. Then you do steps 1 to 3 against that layer.
+
+COM is why DX12 and GameInput don't need that layer. A COM object is a pointer to a table of function pointers with a fixed calling convention, which is a C-compatible layout by design. GameInput's header only compiles as C++, but its objects are COM, so Rust can call them directly.
+
+## What the header has that the binary doesn't
+
+GameInput shows this well. Its header defines `GameInputCreate` as an inline C++ function that calls `GameInputInitialize` with `IID_IGameInput`. An inline function is compiled into its caller, so the DLL has no `GameInputCreate` at all. Veehiicuul2's C++ already works around this: it looks up `GameInputInitialize` in GameInputRedist.dll by name. Rust would do the same, with the interface ID and the error-code constants copied from the header. Anything that exists only in the header has to be carried over, by hand or by a tool.
+
+## You've done this from C#
+
+P/Invoke is the same job. `[DllImport("json")] static extern IntPtr json_parse(...)` is a declaration you write because C# can't read headers either, and a wrong one fails in the same silent way.
+
+## Who writes step 1
+
+Either a person or an AI writes it by hand, or a tool reads the header for you. For ordinary C libraries that tool is rust-bindgen, which uses Clang to read the header; it would need LLVM installed, which this machine doesn't have. For Windows APIs it's windows-bindgen, reading Microsoft's metadata. So "Rust can't read C++ headers" really means Rust's compiler can't. Something has to translate them, and the choice is who translates and what checks the translation.
