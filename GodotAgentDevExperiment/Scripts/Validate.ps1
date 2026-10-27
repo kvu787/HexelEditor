@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 param(
-    # The one display set aside for validation. Everything else on the machine belongs to the user.
-    [string] $Display = 'NE18NZ2',
+    # A display set aside for validation, on which the window may appear in front. Without one, every display
+    # belongs to the user, and the window appears on the primary one behind every window they have open.
+    [string] $Display = '',
     # Omits the pass that puts the real window on that display. Everything that needs no display still runs.
     [switch] $SkipDisplayPass,
     # Runs only that pass, on the build that is already there, for looking into it on its own.
@@ -66,7 +67,8 @@ function Read-ChecksReport {
 
 $validationPath = New-LogFolder -Prefix 'Validation_'
 $locked = Test-SessionLocked
-Write-Output "Validation display: $Display. Session locked: $locked (input desktop '$(Get-InputDesktopName)')."
+$passName = if ($Display) { "Display pass on $Display" } else { 'Behind-everything pass on the primary display' }
+Write-Output "Validation display: $(if ($Display) { $Display } else { 'none; the window goes behind every window of the user' }). Session locked: $locked (input desktop '$(Get-InputDesktopName)')."
 Write-Output "Artifacts: $validationPath"
 Write-Output ''
 
@@ -153,7 +155,7 @@ try {
     # The real window on the validation display, at that display's real pixel density, driven through the
     # same checks and photographed from outside as well as from inside.
     if ($SkipDisplayPass) {
-        Add-Step -Name "Display pass on $Display" -Outcome 'skipped' -Detail 'asked for with -SkipDisplayPass'
+        Add-Step -Name $passName -Outcome 'skipped' -Detail 'asked for with -SkipDisplayPass'
     }
     else {
         $application = $null
@@ -162,9 +164,10 @@ try {
             New-Item -ItemType Directory -Path $folder -Force | Out-Null
             # The checks take a few seconds; --hold keeps the window up afterwards so it can be photographed
             # from outside and its styles and taskbar button looked at.
-            $application = & (Join-Path $PSScriptRoot 'StartOnDisplay.ps1') -Display $Display -LogFolder $folder -ApplicationArguments @('--checks', '--frames', "$Frames", '--hold', '12')
+            $application = & (Join-Path $PSScriptRoot 'StartForAgent.ps1') -Display $Display -LogFolder $folder -ApplicationArguments @('--checks', '--frames', "$Frames", '--hold', '12')
             Register-WatchedProcess -Watch $watch -ProcessId $application.Id
             $handle = Get-WindowHandle -ProcessId $application.Id -TimeoutMilliseconds 30000
+            $order = Get-WindowZOrderReport -Handle $handle
             # Photographed once the checks have run, so the picture shows the interface they drove rather than
             # the engine's boot splash, which is all a window shows in its first moments.
             $deadline = [DateTime]::UtcNow.AddSeconds(120)
@@ -179,11 +182,12 @@ try {
             $styles += "; $(Test-TaskbarButton -Title 'Godot')"
             if (-not $application.WaitForExit(180000)) { throw 'The display run did not exit within 180 s.' }
             $detail = Read-ChecksReport -Folder $folder -ExitCode $application.ExitCode
-            $detail += "; window $styles; PrintWindow capture $($image.Width) x $($image.Height) with $($image.DistinctColors) distinct colors"
+            $launch = if (Test-Path -LiteralPath (Join-Path $folder 'Launch.txt')) { (Get-Content -LiteralPath (Join-Path $folder 'Launch.txt')) -join ' ' } else { '' }
+            $detail += "; window $styles; $order; PrintWindow capture $($image.Width) x $($image.Height) with $($image.DistinctColors) distinct colors; launch: $launch"
             if (-not $image.HasContent -and -not $locked) { throw "the capture from outside came back blank; $detail" }
-            Add-Step -Name "Display pass on $Display" -Outcome 'passed' -Detail $detail
+            Add-Step -Name $passName -Outcome 'passed' -Detail $detail
         }
-        catch { Add-Step -Name "Display pass on $Display" -Outcome 'failed' -Detail "$_" }
+        catch { Add-Step -Name $passName -Outcome 'failed' -Detail "$_" }
         finally {
             if ($application -and -not $application.HasExited) {
                 $null = Request-WindowClose -ProcessId $application.Id
@@ -223,7 +227,8 @@ $steps | Format-Table -AutoSize -Wrap | Out-String -Width 400 | Set-Content -Lit
 
 Write-Output ''
 if ($summary.Passed) {
-    Write-Output "Validation passed. Nothing of the run appeared outside $Display, took the foreground, or confined the cursor."
+    $where = if ($Display) { "appeared outside $Display" } else { "covered a window of the user's" }
+    Write-Output "Validation passed. Nothing of the run $where, took the foreground, or confined the cursor."
     Write-Output "Artifacts: $validationPath"
 }
 else {

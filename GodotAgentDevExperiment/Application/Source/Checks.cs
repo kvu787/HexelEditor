@@ -36,6 +36,19 @@ public static class Checks
             // is right for a mouse and wrong for a stroke driven in one go, so it is turned off for the run.
             Input.UseAccumulatedInput = false;
             await Frames(main, 3);
+            // A launcher that shows the window where nobody can see it first shows it tiny, and gives it its
+            // real size a moment later. The interface is laid out for that size, so the checks wait for it.
+            ulong sizeDeadline = Time.GetTicksMsec() + 15000;
+            while (main.GetWindow().Size.X < 640 && Time.GetTicksMsec() < sizeDeadline)
+            {
+                await Frames(main, 1);
+            }
+            if (main.GetWindow().Size.X < 640)
+            {
+                report.Add("Environment", "failed", $"the window is still {main.GetWindow().Size} after 15 s; the launcher never gave it its size");
+                throw new MeasurementOnly();
+            }
+            await Frames(main, 2);
             report.Add("Environment", "passed",
                 $"display server {DisplayServer.GetName()}; {RenderingServer.GetCurrentRenderingMethod()} on {RenderingServer.GetCurrentRenderingDriverName()}; adapter '{RenderingServer.GetVideoAdapterName()}'; " +
                 $"window {DisplayServer.WindowGetSize()} at {DisplayServer.WindowGetPosition()} on screen {DisplayServer.WindowGetCurrentScreen()} of {DisplayServer.GetScreenCount()}; grid {main.Ground.Columns} x {main.Ground.Rows}");

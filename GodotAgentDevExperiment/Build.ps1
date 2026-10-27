@@ -13,4 +13,6 @@ if ($LASTEXITCODE -ne 0) { throw "Godot's import pass failed with exit code $LAS
 if (Select-String -LiteralPath $importLog -Pattern '^(?:SCRIPT )?ERROR:' -Quiet) { throw "Godot reported errors during import. See $importLog." }
 
 Invoke-DotNet build (Join-Path $ApplicationRoot 'GodotAgentDevExperiment.slnx') --configuration Debug --nologo --disable-build-servers '-m:1' '-p:NuGetAudit=false'
+# The hook that lets an agent's run put the engine's window behind every window of the user's.
+& (Join-Path $ExperimentRoot 'BehindHook/Build.ps1') -Output (Join-Path $ExperimentRoot 'Artifacts/BehindHook/BehindHook.dll') | Where-Object { $_ -like 'Ready:*' }
 Write-Output "Ready: $(Get-ApplicationAssembly)"

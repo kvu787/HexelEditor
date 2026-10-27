@@ -43,6 +43,16 @@ function Get-ApplicationAssembly {
     Join-Path $ApplicationRoot '.godot/mono/temp/bin/Debug/GodotAgentDevExperiment.dll'
 }
 
+# The hook that puts the engine's windows behind everything as they are created, built by Build.ps1 and by
+# this on demand. See BehindHook/BehindHook.c.
+function Get-BehindHookLibrary {
+    $library = Join-Path $ExperimentRoot 'Artifacts/BehindHook/BehindHook.dll'
+    if (-not (Test-Path -LiteralPath $library -PathType Leaf)) {
+        & (Join-Path $ExperimentRoot 'BehindHook/Build.ps1') -Output $library | Out-Null
+    }
+    $library
+}
+
 # One folder per run under LogOutput, named by the time it started, never reused.
 function New-LogFolder {
     param([string] $Prefix = '')
@@ -63,6 +73,7 @@ function Get-RunArguments {
         [switch] $Headless,
         [string] $RenderingDriver = '',
         [string] $Position = '',
+        [string] $Resolution = '',
         [string[]] $ApplicationArguments = @()
     )
     $arguments = @('--path', ('"{0}"' -f $ApplicationRoot), '--log-file', ('"{0}"' -f (Join-Path $LogFolder 'Godot.log')))
@@ -72,6 +83,7 @@ function Get-RunArguments {
         if ($RenderingDriver -eq 'opengl3') { $arguments += @('--rendering-method', 'gl_compatibility') }
     }
     if ($Position) { $arguments += @('--position', $Position) }
+    if ($Resolution) { $arguments += @('--resolution', $Resolution) }
     $arguments += @('--', '--log-folder', ('"{0}"' -f $LogFolder)) + $ApplicationArguments
     $arguments
 }

@@ -1,7 +1,8 @@
 #Requires -Version 7.0
 param(
-    # The display the window is measured on. The frame has to reach a real display for PresentMon to time it.
-    [string] $Display = 'NE18NZ2',
+    # A display set aside for the window. Without one it sits on the primary display behind every window of
+    # the user's. Either way the frames reach a real display, which is what PresentMon times.
+    [string] $Display = '',
     [int] $Frames = 900,
     # The grid size, to measure what a brush stroke costs on a map the size a real one has.
     [int] $Columns = 1024,
@@ -105,7 +106,7 @@ try {
     }
 
     $applicationArguments = @('--measure', '--frames', "$Frames", '--columns', "$Columns", '--rows', "$Rows")
-    $application = & (Join-Path $PSScriptRoot 'StartOnDisplay.ps1') -Display $Display -LogFolder $folder -RenderingDriver $RenderingDriver -ApplicationArguments $applicationArguments
+    $application = & (Join-Path $PSScriptRoot 'StartForAgent.ps1') -Display $Display -LogFolder $folder -RenderingDriver $RenderingDriver -ApplicationArguments $applicationArguments
     Register-WatchedProcess -Watch $watch -ProcessId $application.Id
     if (-not $application.WaitForExit(300000)) { $application.Kill(); throw 'The measurement run did not exit within 300 s.' }
     if ($application.ExitCode -ne 0) { throw "The measurement run failed with exit code $($application.ExitCode). See Godot.log." }
