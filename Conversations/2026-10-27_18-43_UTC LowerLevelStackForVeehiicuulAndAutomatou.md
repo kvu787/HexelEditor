@@ -533,3 +533,61 @@ If you'd rather not:
 - **A hand-written reader and writer** is a few hundred lines plus tests, as in my previous list.
 
 Rust is still the only install this needs; PIX is still optional.
+
+## User
+
+okay, serde and serde_json are reasonable additions.
+
+i want to revisit the windows crate decision.
+
+answer this question:
+creative direction will be done by me while everything else will be done with opus 5.5, fable 5.1, gpt 6.1 sol, gpt 6 astra, and similar models and the successors of those models. what would you do for using windows apis from rust?
+
+## Assistant
+
+I found something that matters for this answer: windows-core and windows-bindgen moved to 0.100 in September 2026, while the `windows` crate itself hasn't had a release since 0.62.2 in October 2025. I'm checking the windows-rs release notes to see why.
+
+## Assistant
+
+**I'd generate the bindings with windows-bindgen and commit the generated file to the repository. I wouldn't depend on the `windows` crate itself, and I wouldn't hand-write anything except GameInput.**
+
+## Why generated, not hand-written
+
+The declarations come from Microsoft's metadata through Microsoft's generator, so there's no hand-made layout for a model to get wrong and nothing to check against the headers. That removes the one silent failure we found in hand-written bindings. Hand-written bindings stay only where the metadata has nothing: GameInput, with the C++ check.
+
+## Why a committed file, not the `windows` crate
+
+Both come from the same generator and the same metadata, so the declarations are equally correct either way. What differs is where they live, and that matters for models:
+
+- **Models read the real signatures instead of recalling them.** The `windows` crate's signatures have changed from release to release, and models learned from code written against many of those releases. They sometimes write calls for a version you aren't on. The compiler catches it, but each one is a wasted round. A committed file holds exactly the signatures this project uses, at the version it uses, in one place a model can read.
+- **Every new Windows API shows up in a diff.** Using a new API means adding its name to a list and regenerating, so the commit shows every new function and type. With the crate, one feature flag quietly brings in a whole area of Windows.
+- **It's small, and it's yours.** It holds only what the games call, instead of every Windows API, so it also builds faster. If a generated declaration is ever wrong, you can see it and fix it in your own repository, which is the root-cause control you left Godot for.
+- **It's where the releases are.** windows-core, windows-link and windows-bindgen all had 0.100 releases on September 3, 2026. The `windows` crate's latest release is still 0.62.2, from October 2025. The release notes don't say why, so I wouldn't read much into it, but generating your own keeps you on the current generator.
+
+## How it works
+
+1. **Keep a list of the APIs the games use,** by full name, such as `Windows.Win32.Graphics.Direct3D12.ID3D12Device` and `Windows.Win32.UI.WindowsAndMessaging.CreateWindowExW`. windows-bindgen brings in the types they depend on.
+2. **A script runs windows-bindgen over that list** and writes one file, such as `Source/Platform/Bindings.rs`, which is committed.
+3. **A test regenerates the file and fails if it differs from the committed one.** Nobody can edit it by hand or forget to regenerate.
+4. **One rule goes in AGENTS.md:** to use a new Windows API, add it to the list and regenerate; never edit the generated file.
+
+GameInput stays as before: declarations written with windows-core's interface macro, checked by the C++ program against GameInput.h.
+
+## What changes in the dependency list
+
+- **Out:** `windows`, and the three crates its `std` feature brings in: windows-collections, windows-future and windows-numerics.
+- **Still in, at run time:** windows-core and the small crates it uses: windows-link, windows-result, windows-strings, windows-implement and windows-interface. The generated COM code needs them.
+- **In, as a tool:** windows-bindgen, which carries Microsoft's metadata. It runs only when the bindings are regenerated or checked, and nothing from it is compiled into the games. Pin it and windows-core to the same version.
+- **Unchanged:** serde and serde_json, plus syn, quote, proc-macro2 and unicode-ident at build time.
+
+## How big a change this is
+
+Smaller than it sounds. Code written against the `windows` crate and code written against generated bindings look almost the same, because both come from windows-bindgen. Moving between them is mostly a change of `use` paths, plus whatever changed between generator versions. The `windows` crate is a reasonable choice. The gap between it and committed generated bindings is much smaller than the gap between either one and hand-written bindings with no check.
+
+Sources:
+- [windows-bindgen 0.100.0 readme](https://static.crates.io/readmes/windows-bindgen/windows-bindgen-0.100.0.html)
+- [windows-bindgen documentation](https://docs.rs/windows-bindgen/latest/windows_bindgen/)
+- [windows-core versions on crates.io](https://crates.io/api/v1/crates/windows-core)
+- [windows versions on crates.io](https://crates.io/api/v1/crates/windows)
+- [windows-rs releases](https://github.com/microsoft/windows-rs/releases)
+- [Unable to generate bindings using windows-bindgen (Rust forum)](https://users.rust-lang.org/t/unable-to-generate-bindings-using-windows-binding-for-a-project-around-the-windows-api-the-windows-crate/134484)
