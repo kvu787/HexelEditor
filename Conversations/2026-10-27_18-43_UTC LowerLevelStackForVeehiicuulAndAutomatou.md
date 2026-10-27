@@ -71,3 +71,49 @@ Then Automatou, from a copy of the base layer: hex map painting, a unit and buil
 The language is the one decision that has to come first; everything after the first slice depends on it.
 
 This conversation is recorded in [Conversations](Conversations/2026-10-27_18-43_UTC%20LowerLevelStackForVeehiicuulAndAutomatou.md) and committed.
+
+## User
+
+is it better to have the agent use the windows crate or have it write its own bindings for windows apis
+
+## User
+
+Tool loaded.
+
+## Assistant
+
+Confirmed GameInput isn't in the `windows` crate (0.62.2 has no GameInput feature, and Win32::Gaming holds only Game Explorer and Xbox Live items). Now checking how finely windows-bindgen can filter, then I'll answer.
+
+## Assistant
+
+**Use Microsoft's generated bindings for everything that's in its metadata, and have the agent hand-write only what isn't. Right now that's only GameInput.**
+
+## Why not hand-write everything
+
+- **Hand-written bindings are the one place Rust can't check the agent.** A COM binding is a table of function pointers whose order has to match the header exactly. A skipped method in a base interface, two slots swapped, or a struct field of the wrong width all compile cleanly. At runtime they call the wrong function or corrupt memory. D3D12 is the worst case: ID3D12Device and ID3D12GraphicsCommandList each come as a chain of versions, with each version's methods appended after the last, and across D3D12 and DXGI that's hundreds of slots where a mistake is silent. That would be worse than C++, which at least compiles against the real header.
+- **The `windows` crate isn't a framework.** It's generated from Microsoft's metadata, which is itself generated from the SDK headers. It has no event loop, no ownership model and no abstractions of its own; it's the Rust equivalent of `#include <d3d12.h>`. Your objections to frameworks don't apply to it: if one signature is ever wrong, you declare that one yourself.
+
+## What it costs
+
+- It's a big crate. Enable only the features you use; after the first build it's cached.
+- It has frequent breaking releases. Pin the version and upgrade when you choose.
+- It can lag the Agility SDK, so the newest D3D12 interfaces may be missing. Bind those few by hand, the same way as GameInput.
+
+## Better still: generated bindings checked into the repo
+
+windows-bindgen can generate just the functions and interfaces you name into one `bindings.rs`; Kenny Kerr's standalone example filters down to a single function. Regenerate it from a test or script when you decide to. You get Microsoft's layouts, a file that lists exactly which Windows APIs each game uses, nothing large to compile and no surprise upgrades. The generated COM code still needs the small `windows-core` crate for IUnknown, HRESULT and the interface plumbing. This is what I'd use.
+
+## GameInput by hand, with a test that checks it
+
+GameInput isn't in `windows` 0.62.2: there's no GameInput feature, and `Win32::Gaming` holds only Game Explorer, game statistics and Xbox Live items. Its header is C++ only (`namespace GameInput::v3`), 1,332 lines and seven interfaces. Veehiicuul2 calls about seven methods: GetCurrentReading, GetGamepadState, GetTimestamp, GetDevice, GetDeviceInfo, RegisterDeviceCallback and UnregisterCallback.
+
+- Bind those interfaces with `windows-core`'s interface macro, so they look like the generated ones. Declare every method in header order, including the ones you don't call.
+- Then check it mechanically. A small C++ test DLL, built with MSVC against the real GameInput.h, implements each bound interface with every method reporting its own name, and exports sizeof and offsetof for every bound struct. A Rust test calls each binding and checks that the right method answered and that every layout matches.
+
+That turns the one unchecked spot into a checked one. I'd make it a rule in AGENTS.md: no hand-written binding without that test.
+
+Sources:
+- [windows crate features (0.62.2)](https://docs.rs/crate/windows/latest/features)
+- [windows::Win32::Gaming](https://microsoft.github.io/windows-docs-rs/doc/windows/Win32/Gaming/index.html)
+- [Standalone code generation](https://kennykerr.ca/rust-getting-started/standalone-code-generation.html)
+- [Custom ffi bindings(?)](https://users.rust-lang.org/t/custom-ffi-bindings/142323)
