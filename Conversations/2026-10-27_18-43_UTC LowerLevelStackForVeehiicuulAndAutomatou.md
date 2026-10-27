@@ -117,3 +117,35 @@ Sources:
 - [windows::Win32::Gaming](https://microsoft.github.io/windows-docs-rs/doc/windows/Win32/Gaming/index.html)
 - [Standalone code generation](https://kennykerr.ca/rust-getting-started/standalone-code-generation.html)
 - [Custom ffi bindings(?)](https://users.rust-lang.org/t/custom-ffi-bindings/142323)
+
+## User
+
+help me understand this better. ai wrote the c++ for dx12, win32, and gameinput fine. so, why can't ai write the rust for that as well without having to use anything outside of core rust language?
+
+## Assistant
+
+**It can. Nothing in Rust stops it, and the `windows` crate is itself ordinary Rust that a program wrote. The difference is what checks the result.**
+
+## What the C++ had that Rust won't
+
+The AI that wrote the C++ never wrote declarations for DX12, Win32 or GameInput. It wrote `#include <d3d12.h>`, and Microsoft's 35,901-line header told the compiler where every method sits and what every struct looks like. The AI wrote calls, the compiler checked each one against Microsoft's declarations, and every mistake came back as a compile error the AI could fix. That's a large part of why it went fine.
+
+Rust can't read C++ headers. Someone has to write the Rust version of those declarations, and with no crates that's the AI. From then on the compiler checks calls against the AI's declarations, not Microsoft's. If a declaration is wrong, everything still compiles.
+
+## What a wrong declaration looks like
+
+In d3d12.h, ID3D12GraphicsCommandList's own methods 21 to 30 alternate between compute and graphics: SetComputeRootSignature, SetGraphicsRootSignature, SetComputeRootDescriptorTable, SetGraphicsRootDescriptorTable, and so on. Each pair takes identical parameters. If a hand-written list drops one entry anywhere earlier, every later call lands one place off: the renderer calls SetGraphicsRootSignature and gets SetComputeRootSignature. It compiles, it runs, and the picture is wrong or missing. RSSetViewports and RSSetScissorRects, its 13th and 14th methods, are the same trap.
+
+This matters more for an agent than for a person. Its feedback is compile errors and failing tests, and a wrong declaration produces neither. It produces a wrong picture far from the cause, so the agent debugs the symptom: the shader, the root signature, the viewport numbers. It can end up "fixing" it somewhere else and leave the real bug in place. The D3D12 debug layer would likely catch that particular one at draw time; GameInput has no debug layer.
+
+## So it's about the check, not the crate
+
+- **Generated (windows-bindgen):** Microsoft's tool writes them from Microsoft's metadata, so there are no hand-made layouts to get wrong.
+- **Hand-written and checked:** the AI writes them, and a test compares them with the real headers.
+- **Hand-written and unchecked:** the AI writes them, and nothing notices a mistake until something looks wrong.
+
+The middle one gives you what you're asking for. The game depends on nothing but Rust and its standard library, and a test keeps the declarations honest: a small C++ program compiled against the real headers reports where each method sits and how each struct is laid out, and a Rust test compares that with the hand-written versions. MSVC is on the machine regardless, since Rust's MSVC toolchain links with Microsoft's linker.
+
+It's a bounded job. Veehiicuul3's renderer and text code call about 70 distinct COM methods across D3D12, DXGI and DirectWrite. You'd declare those interfaces up to the last method you call, the structs, enums and Win32 functions you use, and IUnknown, HRESULT and GUID yourself, which also drops `windows-core`. By my rough estimate that's a few thousand lines, not 35,901.
+
+**That changes my recommendation: since owning the whole stack is the point, I'd go with hand-written and checked.** Generated bindings are less to maintain, so they're the better choice only if the dependency doesn't bother you. The one thing I wouldn't do is hand-write them without the check.
